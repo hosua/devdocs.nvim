@@ -1,0 +1,157 @@
+*devdocs.txt*  Offline devdocs.io documentation inside Neovim
+
+==============================================================================
+CONTENTS                                                     *devdocs-contents*
+
+  1. Introduction ........................ |devdocs-introduction|
+  2. Commands ............................ |devdocs-commands|
+  3. Setup and options ................... |devdocs-setup|
+  4. Viewer keys ......................... |devdocs-viewer|
+  5. Manager keys ........................ |devdocs-manager|
+  6. Data on disk ........................ |devdocs-data|
+  7. Highlight groups .................... |devdocs-highlights|
+  8. Health .............................. |devdocs-health|
+
+==============================================================================
+1. INTRODUCTION                                          *devdocs-introduction*
+
+devdocs.nvim downloads documentation from devdocs.io per language and
+version, converts it once to markdown and reads it from disk. The symbol
+under the cursor opens its page, examples are extracted from it, every
+installed doc is searched with ripgrep, and a manager installs, updates and
+removes docs. The README has the long version.
+
+==============================================================================
+2. COMMANDS                                                  *devdocs-commands*
+
+                                                                     *:DevDocs*
+:DevDocs {sub} [args]
+
+  definition [text]      page/section of the symbol under the cursor, the
+                         visual selection, or {text}
+  example [text]         only the code examples of that entry
+  open {doc} [entry]     open a doc by slug or name, optionally at an entry
+  search [query]         grep every enabled doc; "@css ..." narrows to one
+  list                   the manager
+  install [doc]          docs for the current buffer, or a named doc.
+                         ! reinstalls
+  install-all            every doc devdocs offers (asks; ! skips)
+  uninstall {doc}        remove a doc (asks; ! skips)
+  update [doc]           reinstall one doc, or every outdated one
+  sync                   install what `import.docs` asks for
+  status                 running install jobs
+  recent                 recently viewed pages
+  mirror [--force] [--scrape]
+                         clone freeCodeCamp/devdocs, download every doc
+                         through its container, install-all from that tree
+
+Flat aliases:                                            *devdocs-aliases*
+:DevDocsShowDefinition :DevDocsShowExample :DevDocsOpen :DevDocsSearch
+:DevDocsList :DevDocsInstall :DevDocsInstallAll :DevDocsUninstall
+:DevDocsUpdate :DevDocsForceCloneAndScrape (= mirror --force)
+
+==============================================================================
+3. SETUP AND OPTIONS                                            *devdocs-setup*
+
+                                                             *devdocs.setup()*
+require("devdocs").setup({opts})
+
+  Optional. Every entry point resolves the defaults on first use. setup()
+  registers the FileType hook for `install_as_needed` and the `import.docs`
+  sync. Options, with defaults:
+
+                                                        *devdocs-data_dir*
+  data_dir            stdpath("data") .. "/devdocs"
+                                                *devdocs-install_as_needed*
+  install_as_needed   true | "prompt" | false. Install the docs a buffer's
+                      language needs, in the project's version.
+                                                          *devdocs-import*
+  import.docs         {} docs to keep installed (slug, name, `*` globs,
+                      case-insensitive). Empty: derived from Mason.
+  import.recent_only  false  only the newest version of each doc
+  import.import_only  false  the list is the whole allowlist
+  import.all          false  every version; lookups switch per project
+                                                         *devdocs-install*
+  install.max_jobs    2 parallel jobs for install-all
+  install.source      "tarball" | "json"
+  install.tarball_url "https://downloads.devdocs.io/{slug}.tar.gz"
+  install.doc_url     "https://documents.devdocs.io/{slug}/{file}"
+  install.manifest_url "https://devdocs.io/docs.json"
+  install.manifest_ttl 86400 seconds
+  install.curl, install.tar   binaries
+                                                          *devdocs-mirror*
+  mirror.dir          nil = data_dir/mirror/devdocs
+  mirror.repo, mirror.image, mirror.docker, mirror.git
+                                                          *devdocs-search*
+  search.rg           "rg"
+  search.max_results  200
+  search.prioritize_buffer_docs true
+                                                            *devdocs-view*
+  view.mode           "float" | "split" | "vsplit" | "tab"
+  view.width, view.height   0.8 (fractions of the editor, or cells)
+  view.border         nil follows 'winborder'
+  view.wrap, view.conceal   true
+                                                          *devdocs-lookup*
+  lookup.fallback     "search" | "lsp_hover" | "none" when the symbol has
+                      no doc entry
+                                                 *devdocs-extra_filetypes*
+  extra_filetypes     filetype -> { doc bases }
+  extra_mason         Mason package -> { doc bases }
+                                                           *devdocs-hooks*
+  hooks.on_install(slug), hooks.on_open(slug, path)
+  notify              true
+
+==============================================================================
+4. VIEWER KEYS                                                 *devdocs-viewer*
+
+  q <Esc>     close                o   open on devdocs.io
+  y           yank the url         <CR> follow the link under the cursor
+  <BS> u      back                 e   only the examples
+  p           the whole page       s   search inside this doc
+  ?           help
+
+==============================================================================
+5. MANAGER KEYS                                               *devdocs-manager*
+
+  j k gg G <C-d> <C-u> PgUp PgDn   move        } {    next / previous group
+  <Tab> l h   expand versions      i   install     X   uninstall (asks)
+  u U         update one / all     e   enable or disable
+  <CR>        open in the viewer   o   open on devdocs.io
+  /           live filter          s   sort by name / size
+  r           refresh the list     A   install every doc (asks)
+  ?           help                 q   close
+
+==============================================================================
+6. DATA ON DISK                                                  *devdocs-data*
+
+  data_dir/manifest.json          cached docs list
+  data_dir/state.json             enabled docs, recent pages (version 1)
+  data_dir/docs/<slug>/meta.json  what is installed (version 1)
+  data_dir/docs/<slug>/entries.tsv
+  data_dir/docs/<slug>/anchors.json
+  data_dir/docs/<slug>/pages/<path>.md
+  data_dir/tmp/                   staging
+  data_dir/mirror/                :DevDocs mirror clone
+
+Deleting docs/<slug> equals :DevDocs uninstall. Files whose version is newer
+than the plugin knows are never overwritten.
+
+==============================================================================
+7. HIGHLIGHT GROUPS                                        *devdocs-highlights*
+
+  DevDocsNormal NormalFloat        DevDocsBorder FloatBorder
+  DevDocsTitle FloatTitle          DevDocsFooter Comment
+  DevDocsHeader Title              DevDocsDim Comment
+  DevDocsMatch Search              DevDocsInstalled DiagnosticOk
+  DevDocsOutdated DiagnosticWarn   DevDocsError DiagnosticError
+  DevDocsProgress DiagnosticInfo   DevDocsKey Special
+  DevDocsLink Underlined
+
+==============================================================================
+8. HEALTH                                                      *devdocs-health*
+
+:checkhealth devdocs reports the Neovim version, which copy of the plugin is
+loaded, tools, the data directory, installed docs, the docs list age and the
+install source.
+
+vim:tw=78:ts=8:ft=help:norl:
