@@ -101,6 +101,21 @@ describe("manifest", function()
     eq({}, slugs "zzz")
   end)
 
+  it("normalizes null fields the way docs.json ships them", function()
+    local raw =
+      vim.json.decode '[{"slug":"css","name":"CSS","version":null,"alias":null,"mtime":1,"db_size":2},{"slug":"x"},"junk"]'
+    local docs = manifest.normalize(raw)
+    eq(2, #docs)
+    eq({ name = "CSS", slug = "css", type = "", version = "", release = "", mtime = 1, db_size = 2 }, docs[1])
+    eq("x", docs[2].name)
+    eq(
+      { "css" },
+      vim.tbl_map(function(d)
+        return d.slug
+      end, manifest.glob(docs, "CSS"))
+    )
+  end)
+
   it("reports no cache and no freshness on a clean data dir", function()
     eq(nil, (manifest.cached()))
     eq(false, manifest.is_fresh())
