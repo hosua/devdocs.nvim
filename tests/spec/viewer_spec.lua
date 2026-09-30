@@ -78,13 +78,36 @@ describe("viewer (pure parts)", function()
     ok(lines[2]:find("not on disk", 1, true))
   end)
 
-  it("finds the link under the cursor", function()
-    local line = "see [`open()`](devdocs://python/library/functions#open) and [x](https://a.b/c)."
-    eq("devdocs://python/library/functions#open", viewer.link_at(line, 6))
-    eq("https://a.b/c", viewer.link_at(line, 60))
-    eq("devdocs://python/library/functions#open", viewer.link_at(line, 0), "first link when the cursor is off any")
-    eq("https://x.y/z", viewer.link_at("plain https://x.y/z, more", 8))
-    eq(nil, viewer.link_at("nothing here", 3))
+  it("shows link text only and remembers the targets", function()
+    local display, links = viewer.display {
+      "see [`open()`](devdocs://python/library/functions#open) and [x](https://a.b/c).",
+      "plain https://x.y/z, more",
+      "![img](i.png) none",
+      "```",
+      "[not](a-link)",
+      "```",
+      "after [y](z)",
+    }
+    eq(
+      { "see `open()` and x.", "plain https://x.y/z, more", "img none", "```", "[not](a-link)", "```", "after y" },
+      display
+    )
+    eq(
+      { { s = 5, e = 12, url = "devdocs://python/library/functions#open" }, { s = 18, e = 18, url = "https://a.b/c" } },
+      links[1]
+    )
+    eq({ { s = 7, e = 19, url = "https://x.y/z" } }, links[2])
+    eq(nil, links[3])
+    eq(nil, links[5])
+    eq({ { s = 7, e = 7, url = "z" } }, links[7])
+  end)
+
+  it("finds the link under the cursor, else the first on the line", function()
+    local _, links = viewer.display { "see [`open()`](devdocs://x/y) and [x](https://a.b/c)." }
+    eq("devdocs://x/y", viewer.link_at(links[1], 6))
+    eq("https://a.b/c", viewer.link_at(links[1], 17))
+    eq("devdocs://x/y", viewer.link_at(links[1], 0))
+    eq(nil, viewer.link_at(nil, 3))
   end)
 
   it("parses devdocs urls and rejects bad slugs", function()

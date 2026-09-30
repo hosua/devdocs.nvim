@@ -39,9 +39,8 @@ end
 --- until then this greps and lists the hits in the viewer-less quickfix).
 --- @param query string|nil
 function M.search(query)
-  local ok, ui = pcall(require, "devdocs.ui.search")
-  if ok then
-    ui.open(query)
+  if require("devdocs.ui.picker").has_telescope() then
+    require("devdocs.ui.search").open(query)
     return
   end
   local search = require "devdocs.search"

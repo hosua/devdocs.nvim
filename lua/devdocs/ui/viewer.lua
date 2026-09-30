@@ -18,6 +18,8 @@ local M = {}
 --- @field path string      page path with optional fragment
 --- @field entry DevDocsEntry|nil
 --- @field mode "section"|"page"|"examples"
+--- @field line integer|nil       line of the page to put the cursor on
+--- @field view_mode "float"|"split"|"vsplit"|"tab"|nil  window kind override
 
 M.FOOTER = "o browser  y url  ⏎ follow  ⌫ back  e examples  p page  s search  ? help  q close"
 
@@ -76,25 +78,90 @@ function M.render(view)
 end
 
 local current
+local NS = vim.api.nvim_create_namespace "devdocs_viewer"
 
---- The devdocs:// or http(s) link under the cursor in the viewer buffer.
---- @param line string
+--- @class DevDocsLink
+--- @field s integer 1-based byte column where the link text starts
+--- @field e integer 1-based byte column where it ends (inclusive)
+--- @field url string
+
+--- Markdown links shown as their text only (so wrapping follows what is
+--- visible), with the targets remembered per line. Lines inside fenced code
+--- are left alone. Pure.
+--- @param lines string[]
+--- @return string[] display, table<integer, DevDocsLink[]> links by 1-based row
+function M.display(lines)
+  local out, links = {}, {}
+  local fence
+  for i, line in ipairs(lines) do
+    local stripped = line:gsub("^%s+", "")
+    local f = stripped:match "^(````?)"
+    if fence then
+      if f and stripped:match("^" .. fence .. "%s*$") then
+        fence = nil
+      end
+      out[i] = line
+    elseif f then
+      fence = f
+      out[i] = line
+    else
+      local parts, row, pos, width = {}, {}, 1, 0
+      while true do
+        local s, e, bang, text, url = line:find("(!?)%[([^%]]*)%]%(([^)]+)%)", pos)
+        if not s then
+          parts[#parts + 1] = line:sub(pos)
+          break
+        end
+        local before = line:sub(pos, s - 1)
+        parts[#parts + 1] = before
+        width = width + #before
+        parts[#parts + 1] = text
+        if bang == "" and text ~= "" then
+          row[#row + 1] = { s = width + 1, e = width + #text, url = url }
+        end
+        width = width + #text
+        pos = e + 1
+      end
+      out[i] = table.concat(parts)
+      -- bare urls stay visible and clickable
+      for s, url in out[i]:gmatch "()(%a[%w+.-]*://[^%s%)%]]+)" do
+        local u = url:gsub("[%.,;:]+$", "")
+        row[#row + 1] = { s = s, e = s + #u - 1, url = u }
+      end
+      if #row > 0 then
+        table.sort(row, function(a, b)
+          return a.s < b.s
+        end)
+        links[i] = row
+      end
+    end
+  end
+  return out, links
+end
+
+--- The link under the cursor on a line, else the first link of the line.
+--- @param row_links DevDocsLink[]|nil
 --- @param col integer 0-based cursor column
 --- @return string|nil url
-function M.link_at(line, col)
-  local best
-  for s, url, e in line:gmatch "()%b[]%((%S-)%)()" do
-    if col + 1 >= s and col + 1 < e then
-      return url
-    end
-    best = best or url
+function M.link_at(row_links, col)
+  if not row_links or #row_links == 0 then
+    return nil
   end
-  for s, url, e in line:gmatch "()(%a[%w+.-]*://%S+)()" do
-    if col + 1 >= s and col + 1 < e then
-      return (url:gsub("[%.,;:)%]]+$", ""))
+  for _, l in ipairs(row_links) do
+    if col + 1 >= l.s and col + 1 <= l.e then
+      return l.url
     end
   end
-  return best
+  return row_links[1].url
+end
+
+local function apply_links(buf, links)
+  vim.api.nvim_buf_clear_namespace(buf, NS, 0, -1)
+  for row, list in pairs(links) do
+    for _, l in ipairs(list) do
+      pcall(vim.api.nvim_buf_set_extmark, buf, NS, row - 1, l.s - 1, { end_col = l.e, hl_group = "DevDocsLink" })
+    end
+  end
 end
 
 local function notify(msg, level)
@@ -116,14 +183,20 @@ local function show(view, push_history)
   if err then
     notify(err, vim.log.levels.WARN)
   end
+  if view.view_mode and current and current.float:valid() and current.float.mode ~= view.view_mode then
+    M.close()
+  end
+  local display, links = M.display(lines)
   if current and current.float:valid() then
     if push_history then
       current.history[#current.history + 1] = current.view
     end
     current.view = view
-    current.float:set_lines(lines)
+    current.links = links
+    current.float:set_lines(display)
+    apply_links(current.float.buf, links)
     current.float:set_title(title, M.FOOTER)
-    vim.api.nvim_win_set_cursor(current.float.win, { 1, 0 })
+    vim.api.nvim_win_set_cursor(current.float.win, { math.min(view.line or 1, #lines), 0 })
   else
     local keys = {}
     local self = { view = view, history = {} }
@@ -155,10 +228,11 @@ local function show(view, push_history)
     end)
     keys["?"] = act(M.help)
     self.float = float.open {
-      lines = lines,
+      lines = display,
       title = title,
       footer = M.FOOTER,
       filetype = "markdown",
+      mode = view.view_mode,
       name = ("devdocs://%s/%s"):format(view.slug, view.path),
       keys = keys,
       on_close = function()
@@ -168,6 +242,11 @@ local function show(view, push_history)
       end,
     }
     current = self
+    self.links = links
+    apply_links(self.float.buf, links)
+    if view.line then
+      pcall(vim.api.nvim_win_set_cursor, self.float.win, { math.min(view.line, #lines), 0 })
+    end
   end
   store.push_recent(view.slug, view.path, view.entry and view.entry.name or index.title(lines))
   local hook = config.get().hooks.on_open
@@ -235,8 +314,7 @@ function M.follow()
     return
   end
   local row, col = unpack(vim.api.nvim_win_get_cursor(current.float.win))
-  local line = vim.api.nvim_buf_get_lines(current.float.buf, row - 1, row, false)[1] or ""
-  local url = M.link_at(line, col)
+  local url = M.link_at((current.links or {})[row], col)
   if not url then
     notify "no link under the cursor"
     return
@@ -276,7 +354,9 @@ function M.help()
   local v = vim.tbl_extend("force", current.view, { mode = "help" })
   current.history[#current.history + 1] = current.view
   current.view = v
+  current.links = {}
   current.float:set_lines(M.HELP)
+  apply_links(current.float.buf, {})
   current.float:set_title("DevDocs help", "⌫ back  q close")
 end
 
