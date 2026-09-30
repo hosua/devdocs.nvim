@@ -1,4 +1,4 @@
-.PHONY: test integration smoke fmt check
+.PHONY: test integration smoke golden fmt check
 
 test:
 	nvim --headless -u NONE -l tests/run.lua spec
@@ -11,6 +11,10 @@ integration:
 
 smoke:
 	@for t in tests/smoke/*.sh; do [ -e "$$t" ] || continue; echo "== $$t"; bash "$$t" || exit 1; done
+
+# Rewrite the converter goldens from tests/fixtures/*.html; review the diff.
+golden:
+	nvim --headless -u NONE -l tests/fixtures/regen.lua
 
 fmt:
 	stylua .
