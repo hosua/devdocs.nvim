@@ -188,6 +188,32 @@ function M.glob(docs, pattern)
   return out
 end
 
+--- docs.json has `"version": null` and `"alias": null` on most entries, which
+--- decode to vim.NIL (a userdata) unless the decoder is told otherwise.
+--- Coerce every field to the type the rest of the plugin assumes.
+--- @param docs table[]
+--- @return DevDocsDoc[]
+function M.normalize(docs)
+  local out = {}
+  for _, d in ipairs(docs) do
+    if type(d) == "table" and type(d.slug) == "string" then
+      out[#out + 1] = {
+        name = type(d.name) == "string" and d.name or d.slug,
+        slug = d.slug,
+        type = type(d.type) == "string" and d.type or "",
+        version = type(d.version) == "string" and d.version or "",
+        release = type(d.release) == "string" and d.release or "",
+        mtime = type(d.mtime) == "number" and d.mtime or 0,
+        db_size = type(d.db_size) == "number" and d.db_size or 0,
+        links = type(d.links) == "table" and d.links or nil,
+        alias = type(d.alias) == "string" and d.alias or nil,
+        attribution = type(d.attribution) == "string" and d.attribution or nil,
+      }
+    end
+  end
+  return out
+end
+
 -- ---------------------------------------------------------------- cache on disk
 
 --- @return DevDocsDoc[]|nil docs, integer|nil fetched_at
@@ -196,7 +222,7 @@ function M.cached()
   if not rec or type(rec.docs) ~= "table" then
     return nil
   end
-  return rec.docs, rec.fetched_at
+  return M.normalize(rec.docs), rec.fetched_at
 end
 
 --- @param now integer|nil
@@ -230,6 +256,7 @@ function M.fetch(cb, opts)
         cb((M.cached()), "the docs list is not a JSON array: " .. tostring(err))
         return
       end
+      docs = M.normalize(docs)
       local ok, werr = store.write_file(
         paths.manifest_file(),
         vim.json.encode { version = M.VERSION, fetched_at = opts.now or os.time(), docs = docs }
