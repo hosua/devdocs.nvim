@@ -34,19 +34,26 @@ function M.score_name(name, query)
     return 95
   end
   -- "join" against "os.path.join()": a qualified entry ending in the query
-  local suffix_at = n:find(q, 1, true)
-  while suffix_at do
-    local before = suffix_at > 1 and n:sub(suffix_at - 1, suffix_at - 1) or ""
-    local after = n:sub(suffix_at + #q, suffix_at + #q)
+  local best
+  local at = n:find(q, 1, true)
+  while at do
+    local before = at > 1 and n:sub(at - 1, at - 1) or ""
+    local after = n:sub(at + #q, at + #q)
     if (before == "" or before:match(SEP)) and (after == "" or after:match(SEP) or after == "(") then
-      if suffix_at + #q > #n or n:sub(suffix_at + #q) == "()" then
+      local score
+      if at + #q > #n or n:sub(at + #q) == "()" then
         -- ends the name: the strongest partial match; shorter qualifiers first
-        return math.max(60, 85 - (suffix_at - 1) / 2)
+        score = math.max(60, 85 - (at - 1) / 2)
+      else
+        -- starts or sits inside: "os.path" against "os.path.join()"
+        score = math.max(35, 60 - (at - 1) / 2 - (#n - #q) / 10)
       end
-      -- starts or sits inside: "os.path" against "os.path.join()"
-      return math.max(35, 60 - (suffix_at - 1) / 2 - (#n - #q) / 10)
+      best = math.max(best or 0, score)
     end
-    suffix_at = n:find(q, suffix_at + 1, true)
+    at = n:find(q, at + 1, true)
+  end
+  if best then
+    return best
   end
   -- plain substring, anywhere
   if n:find(q, 1, true) then
