@@ -7,6 +7,7 @@ local M = {}
 --- @field ok boolean
 --- @field status integer HTTP status (0 for file:// and transport failures)
 --- @field err string|nil
+--- @field code integer|nil curl exit code on failure
 
 --- @param bin string
 --- @return boolean
@@ -54,7 +55,7 @@ function M.download(url, dest, opts, cb)
       if msg == "" then
         msg = ("curl exited %d"):format(res.code)
       end
-      cb { ok = false, status = status, err = msg }
+      cb { ok = false, status = status, err = msg, code = res.code }
       return
     end
     local ok, err = vim.uv.fs_rename(part, dest)
