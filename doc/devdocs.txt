@@ -38,6 +38,16 @@ removes docs. The README has the long version.
                          ! reinstalls
   install-all            every doc devdocs offers (asks; ! skips)
   uninstall {doc}        remove a doc (asks; ! skips)
+  prune [lang]           delete old versions. Per language keep the newest
+                         installed version that is enabled (the newest
+                         installed one when all are disabled; versions
+                         compare across the docs list and installed
+                         meta.json, so an install newer than the list is
+                         kept) and every installed version a project pins
+                         in projects.json; delete the other installed
+                         versions. Asks with the list, naming kept pinned
+                         versions; ! skips. A language with one installed
+                         version is never touched
   update [doc]           reinstall one doc, or every outdated one
   sync                   install what `import.docs` asks for
   status                 running install jobs
@@ -53,7 +63,7 @@ removes docs. The README has the long version.
 Flat aliases:                                            *devdocs-aliases*
 :DevDocsShowDefinition :DevDocsShowExample :DevDocsOpen :DevDocsSearch
 :DevDocsList :DevDocsInstall :DevDocsInstallAll :DevDocsUninstall
-:DevDocsUpdate :DevDocsForceCloneAndScrape (= mirror --force)
+:DevDocsUpdate :DevDocsPrune :DevDocsForceCloneAndScrape (= mirror --force)
 
 ==============================================================================
 3. SETUP AND OPTIONS                                            *devdocs-setup*
@@ -109,6 +119,14 @@ installed versions, from an attached language server, the shebang, project
 files (nearest package, then the git root), then the installed tool. Results
 are cached per buffer and per project (projects.json, re-checked against the
 files' mtimes once per session). See :DevDocs detect and :DevDocs resync.
+                                                            *devdocs-list*
+  list.release_dates  true: the manager dates each doc by when its version
+                      was released upstream, from endoflife.date
+                      (https://endoflife.date/api/v1/products/<product>,
+                      cached 7 days in data_dir/releases/). false: no
+                      network calls; every date is the DevDocs build date.
+                      A date marked "≈" is the DevDocs build date (docs.json
+                      mtime): no upstream release date is known for it.
                                                  *devdocs-extra_filetypes*
   extra_filetypes     filetype -> { doc bases }
   extra_mason         Mason package -> { doc bases }
@@ -133,13 +151,56 @@ files' mtimes once per session). See :DevDocs detect and :DevDocs resync.
 ==============================================================================
 5. MANAGER KEYS                                               *devdocs-manager*
 
-  j k gg G <C-d> <C-u> PgUp PgDn   move        } {    next / previous group
+  j k gg G <C-d> <C-u> PgUp PgDn   move        } {    next / previous section
   <Tab> l h   expand versions      i   install     X   uninstall (asks)
   u U         update one / all     e   enable or disable
   <CR>        open in the viewer   o   open on devdocs.io
   /           live filter          s   sort by name / size
   r           refresh the list     A   install every doc (asks)
+  m M         mark / clear marks   S :w  apply marks (install + uninstall)
   ?           help                 q   close
+
+One row per language; ▸ expands it into its versions. On a language row, i
+/ e / <CR> / o act on its installed current version (else the newest), u on
+its outdated versions and X on every installed version the filter shows.
+Columns: Version
+("(current)" is DevDocs' rolling latest), Size (a language sums its installed
+versions), Released (upstream release date, see |devdocs-list|; "≈" marks a
+DevDocs build date used when none is known), Pages, Notes.
+
+  Marking, applying and bulk delete (every delete asks once and lists what
+  goes):
+  m           mark / unmark, installed or not, move down (a language row:
+              its installed versions the filter shows, else its newest
+              version; expand it to mark an older one). Installing
+              versions can not be marked.
+  V v ... m   mark the visual selection (again: unmark)
+  M           clear every mark
+  :w  S       apply the marks: install the marked docs that are not
+              installed, uninstall the marked installed ones. A centered
+              menu lists "Install (N)" with the disk the downloads take
+              ("-12.3 MB", DevDocsCost, red) and "Uninstall (N)" with the
+              disk freed ("+45.6 MB", DevDocsFreed, green). At the bottom
+              right, in normal text, "Disk used" and "Disk freed" (each
+              left out when its group is empty) and "Net" = freed - used:
+              "+33.3 MB" in DevDocsFreed (green) when space is gained,
+              "-X MB" in DevDocsCost (red) when it is consumed, "0 B" when
+              even. The menu also says how many marks the filter hides. y or <CR> applies, n q <Esc>
+              cancels. Applied marks clear, failed ones stay. :wq and :x
+              apply, then close the list (not when the menu is cancelled).
+  V v ... X d uninstall the installed docs in the visual selection
+  D           prune this language (the |:DevDocs| prune keep rule)
+  gD          the same for every language (= :DevDocs prune)
+
+  Marks survive filter changes; the status line shows "N marked" while any
+  exist and the list buffer is 'modified', so :q refuses (E37) until they
+  are applied or cleared; q and <Esc> close the list anyway.
+
+  Marked mode: while any mark is pending the hint line shows
+  "S apply 3 marked (2 install, 1 uninstall)  m toggle  M clear ..." and
+  i, X, V ... X d and u do nothing (they would act on one row behind the
+  plan's back); they say "N marked: S applies them (M clears)". D, gD, U
+  and A still work.
 
 ==============================================================================
 6. DATA ON DISK                                                  *devdocs-data*
@@ -152,6 +213,8 @@ files' mtimes once per session). See :DevDocs detect and :DevDocs resync.
   data_dir/docs/<slug>/entries.tsv
   data_dir/docs/<slug>/anchors.json
   data_dir/docs/<slug>/pages/<path>.md
+  data_dir/releases/<product>.json  endoflife.date release cycles (cache,
+                                  safe to delete)
   data_dir/tmp/                   staging
   data_dir/mirror/                :DevDocs mirror clone
 
@@ -166,14 +229,21 @@ than the plugin knows are never overwritten.
   DevDocsHeader Title              DevDocsDim Comment
   DevDocsMatch Search              DevDocsInstalled DiagnosticOk
   DevDocsOutdated DiagnosticWarn   DevDocsError DiagnosticError
-  DevDocsProgress DiagnosticInfo   DevDocsKey Special
-  DevDocsLink Underlined
+  DevDocsProgress DiagnosticInfo   DevDocsKey @type.builtin
+  DevDocsLink Underlined           DevDocsMark DiagnosticHint
+  DevDocsCost DiagnosticError      DevDocsFreed DiagnosticOk
 
+Key hints (manager hint line and help, viewer footer and help, apply menu)
+draw keys in DevDocsKey and actions in DevDocsDim. DevDocsKey links to
+@type.builtin: teal in NvChad's starlight theme, cyan in Neovim's default
+scheme (Special is red in starlight). Override it like any group: >lua
+  vim.api.nvim_set_hl(0, "DevDocsKey", { fg = "#21BFC2" })
+<
 ==============================================================================
 8. HEALTH                                                      *devdocs-health*
 
 :checkhealth devdocs reports the Neovim version, which copy of the plugin is
-loaded, tools, the data directory, installed docs, the docs list age and the
-install source.
+loaded, tools, the data directory, installed docs, the docs list age, the
+release dates cache and the install source.
 
 vim:tw=78:ts=8:ft=help:norl:

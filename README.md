@@ -72,6 +72,7 @@ One command with subcommands, plus flat aliases for each action.
 | `install [doc]` | `:DevDocsInstall` | docs for the current buffer (right version), or a named doc. `!` reinstalls |
 | `install-all` | `:DevDocsInstallAll` | every doc devdocs offers (asks; `!` skips the question). Already installed docs are skipped |
 | `uninstall <doc>` | `:DevDocsUninstall` | remove a doc (asks; `!` skips) |
+| `prune [lang]` | `:DevDocsPrune` | delete old versions. Per language it keeps (1) the newest installed version that is enabled, or the newest installed one when every installed version is disabled — versions compare across the docs list and the installed `meta.json`, so an install newer than the docs list is kept — and (2) every installed version a project pins in `projects.json` (the version detected for that project resolves to it); it deletes the other installed versions. `lang` limits it to one language. Asks with the full list and names any pinned versions it kept (`!` skips). A language with one installed version is never touched |
 | `update [doc]` | `:DevDocsUpdate` | reinstall one doc, or every installed doc the docs list shows as newer |
 | `sync` | | install what `import.docs` (or the Mason-derived defaults) asks for |
 | `status` | | running install jobs |
@@ -117,16 +118,33 @@ mode, `<CR>` opens in the viewer, `<C-x>` / `<C-v>` / `<C-t>ab` open in a
 split / vsplit / tab, `<C-o>` opens the page in the browser, `<C-y>` yanks
 its url. Start the prompt with `@slug ` to search one doc.
 
-Inside the **manager**:
+Inside the **manager** each language is listed once, under *Installed* (any
+version installed) or *Available*; `▸` expands it into every version DevDocs
+has. The columns:
+
+| column | |
+|---|---|
+| Version | the installed version (or `N installed`); `22.2.1 (current)` is DevDocs' rolling latest |
+| Size | download size; a language sums its installed versions |
+| Released | when that version of the docs was released; `≈` is an estimate from DevDocs' last update |
+| Pages | pages installed |
+| Notes | progress, failures, `update available` |
 
 | key | |
 |---|---|
 | `j`/`k`, `↑`/`↓`, `gg`/`G`, `<C-d>`/`<C-u>`, `PgUp`/`PgDn`, wheel | move |
-| `}` / `{` | next / previous group |
-| `<Tab>`, `l`, `h` | expand or collapse the versions of a doc |
-| `i` | install the doc under the cursor |
-| `X` | uninstall (asks) |
-| `u` / `U` | update it / every outdated doc |
+| `}` / `{` | next / previous section |
+| `<Tab>`, `l`, `h` | expand / collapse a language's versions (`h` on a version folds it) |
+| `i` | install the version under the cursor; on a language, its installed current version or the newest |
+| `X` | uninstall (asks); on a language, every installed version the filter shows |
+| `m` | mark / unmark the doc under the cursor, installed or not, and move down. On a language: its installed versions the filter shows, or its newest version when none is installed (expand it to mark an older one). A version that is installing can not be marked. Marks survive filter changes; the status line shows `N marked` and the buffer shows as modified (`[+]`) |
+| `:w`, `S` | apply the marks: install every marked doc that is not installed and uninstall every marked one that is. A menu in the middle of the screen lists both groups first: `Install (N)` with the disk the downloads take (`-12.3 MB`, red, `DevDocsCost`) and `Uninstall (N)` with the disk they free (`+45.6 MB`, green, `DevDocsFreed`), then, right-aligned at the bottom in normal text, `Disk used` and `Disk freed` (each left out when its group is empty) and `Net` = freed - used (`+33.3 MB` green when space is gained, `-X MB` red when it is consumed, `0 B` when even); it also says how many marks the filter hides; `y`/`<CR>` applies, `n`/`q`/`<Esc>` cancels. Applied marks clear; marks whose install or uninstall failed stay. `:wq` / `:x` apply and then close the list (a cancelled menu keeps it open). With marks pending, `:q` refuses (E37) like any modified buffer; `q` / `<Esc>` close anyway and drop the marks |
+| `V`/`v` … `m` | mark every doc in the visual selection (again: unmark) |
+| `V`/`v` … `X` or `d` | uninstall the installed docs in the visual selection (asks) |
+| `M` | clear every mark |
+| `D` | prune this language (asks): keep its newest enabled installed version and any version a project pins, delete the rest; same rule as `:DevDocs prune` |
+| `gD` | the same for every language, like `:DevDocs prune` (asks) |
+| `u` / `U` | update it (a language: its outdated versions) / every outdated doc |
 | `e` | enable / disable it for lookups and search |
 | `<CR>`, double-click | open in the viewer |
 | `o` | open on devdocs.io |
@@ -136,6 +154,24 @@ Inside the **manager**:
 | `A` | install every doc (asks) |
 | `?` | help |
 | `q`, `<Esc>` | close |
+
+**Marked mode.** While any mark is pending, the hint line under the status
+line switches to `S apply 3 marked (2 install, 1 uninstall)  m toggle  M clear  ⏎ open  / filter  ? help  q close`, so the bulk apply is always on screen.
+`i`, `X`, `V`…`X`/`d` and `u` do nothing then (they would act on one row
+behind the plan's back) and say `N marked: S applies them (M clears)`;
+apply with `S` / `:w` or clear with `M` to get them back. `D`, `gD`, `U`
+and `A` still work (they ask first).
+
+The date next to each doc is when that version was **released upstream**
+(e.g. `angular~22` → 2026-06-03, `python~3.12` → 2023-10-02), taken from the
+[endoflife.date API](https://endoflife.date/docs/api/v1/) (`/api/v1/products/<product>`: each
+release cycle's `releaseDate`). Answers are cached per product in
+`data_dir/releases/` for 7 days; the list shows the cache at once and fills in
+the rest in the background. A date marked `≈` is the DevDocs build date
+(`mtime` in docs.json): no upstream release date is known for that doc (CSS,
+HTML, C, ... have no versions upstream), or it could not be fetched (offline:
+the stale cache is used, nothing is reported). Set
+`list = { release_dates = false }` to make no requests and show build dates only.
 
 ## How a lookup picks its docs
 
@@ -251,6 +287,12 @@ back searching every installed doc after the buffer's own.
     scope = "buffer",
   },
 
+  list = {
+    -- Show when each doc's version was released upstream, from endoflife.date
+    -- (cached for a week). false: no network calls; the list shows DevDocs build dates (≈).
+    release_dates = true,
+  },
+
   -- filetype -> { slug bases }, merged over the built-in table (lua/devdocs/langmap.lua).
   extra_filetypes = {},
   -- Mason package name -> { slug bases }, merged over the built-in table.
@@ -340,6 +382,7 @@ docs/<slug>/meta.json         { version = 1, slug, name, doc_version, release, m
 docs/<slug>/entries.tsv       name <TAB> path <TAB> type, one entry per line
 docs/<slug>/anchors.json      { version = 1, pages = { [page] = { [fragment id] = line } } }
 docs/<slug>/pages/<path>.md   one markdown file per page (path characters outside [A-Za-z0-9._-] percent-encoded)
+releases/<product>.json       endoflife.date release cycles  { version, fetched_at, product, cycles }  (cache, safe to delete)
 tmp/                          staging for installs in progress
 mirror/                       :DevDocs mirror clone
 ```
@@ -350,7 +393,17 @@ plugin knows are never overwritten.
 
 ## Highlight groups
 
-All `default = true` links; override them in your colorscheme.
+All `default = true` links; override them in your colorscheme (or after
+`setup()`), e.g. `vim.api.nvim_set_hl(0, "DevDocsKey", { fg = "#21BFC2" })`.
+
+Every key hint (the manager's hint line and help, the viewer footer and
+help, the apply menu) draws the key in `DevDocsKey` and its action in
+`DevDocsDim`. `DevDocsKey` links to `@type.builtin`, so it follows the
+theme's builtin-type color: teal `#13C299` in NvChad's starlight theme,
+cyan `#8cf8f7` in Neovim's default scheme (also what NvChad shows until its
+treesitter highlights load). `Special` was not used because starlight makes
+it red (`#FF4D51`). Marks (`DevDocsMark`, `DiagnosticHint`) stay a different hue: purple in
+starlight, light blue in the default scheme.
 
 | group | default |
 |---|---|
@@ -365,15 +418,19 @@ All `default = true` links; override them in your colorscheme.
 | `DevDocsOutdated` | `DiagnosticWarn` |
 | `DevDocsError` | `DiagnosticError` |
 | `DevDocsProgress` | `DiagnosticInfo` |
-| `DevDocsKey` | `Special` |
+| `DevDocsKey` | `@type.builtin` |
 | `DevDocsLink` | `Underlined` |
+| `DevDocsMark` | `DiagnosticHint` |
+| `DevDocsCost` | `DiagnosticError` |
+| `DevDocsFreed` | `DiagnosticOk` |
 
 ## Hooks and API
 
 `hooks.on_install(slug)` and `hooks.on_open(slug, path)` are called in
 `pcall`. `require("devdocs")` exposes `definition()`, `example()`,
 `open(doc, entry)`, `search(query)`, `install(slug, { force })`,
-`install_all({ yes })`, `uninstall(slug, { yes })`, `update(slug)`, `sync()`,
+`install_all({ yes })`, `uninstall(slug, { yes })`, `prune({ base, yes })`,
+`update(slug)`, `sync()`,
 `status()`, `recent()` and `statusline()` (a short progress string while
 installs run, `""` otherwise, for your statusline).
 
@@ -381,7 +438,7 @@ installs run, `""` otherwise, for your statusline).
 
 `:checkhealth devdocs` reports the Neovim version, which copy of the plugin
 is loaded, the tools it found, the data directory and its size, installed
-docs, the docs list age and the install source.
+docs, the docs list age, the release dates cache and the install source.
 
 - **"no docs installed for this buffer"**: `:DevDocs install` fetches the
   right ones; `:DevDocs list` shows what exists. Unknown filetypes need
