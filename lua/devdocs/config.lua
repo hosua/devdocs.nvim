@@ -78,6 +78,10 @@ M.defaults = {
     -- When the symbol under the cursor has no doc entry:
     -- "search" opens the search picker with the word, "lsp_hover" calls vim.lsp.buf.hover(), "none" notifies.
     fallback = "search",
+    -- "buffer": when the buffer's language is known, look only in its docs (the version
+    -- its project uses); otherwise in the newest version of every doc.
+    -- "all": the buffer's docs first, then every installed doc (slow with many docs installed).
+    scope = "buffer",
   },
 
   -- filetype -> { slug bases }, merged over the built-in table (lua/devdocs/langmap.lua).
@@ -133,6 +137,9 @@ local function validate(cfg)
   vim.validate("lookup.fallback", cfg.lookup.fallback, function(v)
     return v == "search" or v == "lsp_hover" or v == "none"
   end, "'search', 'lsp_hover' or 'none'")
+  vim.validate("lookup.scope", cfg.lookup.scope, function(v)
+    return v == "buffer" or v == "all"
+  end, "'buffer' or 'all'")
 end
 
 --- @param opts table|nil

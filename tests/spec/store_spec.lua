@@ -38,7 +38,7 @@ describe("store", function()
 
   it("yields default state when the file is missing or corrupt", function()
     local st, err = store.state()
-    eq({ version = 1, enabled = {}, project_versions = {}, recent = {} }, st)
+    eq({ version = 1, enabled = {}, recent = {} }, st)
     eq(nil, err)
     store.write_file(paths.state_file(), "garbage")
     local st2, err2 = store.state()
@@ -114,5 +114,33 @@ describe("store", function()
       ok(not seen[r.path], "duplicate " .. r.path)
       seen[r.path] = true
     end
+  end)
+
+  it("caches state and refreshes it after update_state", function()
+    store.update_state(function(st)
+      st.enabled.css = false
+      return st
+    end)
+    local a = store.state()
+    eq(false, a.enabled.css)
+    a.enabled.css = true -- callers get a copy; mutating it changes nothing
+    eq(false, store.state().enabled.css)
+    store.update_state(function(st)
+      st.enabled.css = nil
+      return st
+    end)
+    eq(nil, store.state().enabled.css)
+  end)
+
+  it("tells subscribers when docs or state change", function()
+    local n = 0
+    store.on_invalidate(function()
+      n = n + 1
+    end)
+    store.invalidate()
+    store.update_state(function(st)
+      return st
+    end)
+    eq(2, n)
   end)
 end)

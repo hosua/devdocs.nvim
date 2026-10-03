@@ -69,7 +69,11 @@ local function fallback(cands, bufdocs)
     require("devdocs").search(prefix .. word)
     return
   end
-  notify(("no doc entry for %s"):format(table.concat(cands, ", ")), vim.log.levels.WARN)
+  local where = #bufdocs.slugs > 0 and (" in " .. table.concat(bufdocs.slugs, ", ")) or ""
+  notify(
+    ("no doc entry for %s%s (:DevDocs search covers every doc)"):format(table.concat(cands, ", "), where),
+    vim.log.levels.WARN
+  )
 end
 
 --- @param mode "section"|"examples"|"page"

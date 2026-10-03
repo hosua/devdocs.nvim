@@ -50,7 +50,7 @@ function M.open_mode(mode, prompt, bufnr)
   local action_state = require "telescope.actions.state"
   local previewers = require "telescope.previewers"
   local cfg = config.get()
-  local order = detect.lookup_order(bufnr)
+  local order = detect.search_order(bufnr)
   if #order == 0 then
     vim.notify("devdocs: no docs installed yet (:DevDocs install, :DevDocs list)", vim.log.levels.WARN)
     return

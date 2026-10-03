@@ -74,4 +74,47 @@ describe("rank", function()
     eq(1, #rank.lookup({ "aa" }, src, { limit = 1 }))
     eq(0, #rank.lookup({ "zz" }, src, { min_score = 90 }))
   end)
+
+  it("gives identical lookups with the substring prefilter", function()
+    local names = {
+      "std::cout",
+      "std::cout_iterator",
+      "os.path.join()",
+      "os.path",
+      "join",
+      "Array.prototype.join()",
+      "String.prototype.at()",
+      "string.format",
+      "format()",
+      "grid-template-areas",
+      "GTA",
+      "io.open()",
+      "readFile",
+      "fs.readFile()",
+      "fs.readFileSync()",
+      "Join",
+      "  spaced  ",
+    }
+    local entries = vim.tbl_map(function(n)
+      return e(n)
+    end, names)
+    local with = { { slug = "x", tier = 1, entries = entries, names = rank.normalized_names(entries) } }
+    local without = { { slug = "x", tier = 1, entries = entries } }
+    for _, cands in ipairs {
+      { "join" },
+      { "os.path.join", "join" },
+      { "cout" },
+      { "std::cout", "cout" },
+      { "gta" },
+      { "readFile" },
+      { "FORMAT" },
+      { "at()" },
+      { "spaced" },
+      { "zzz" },
+    } do
+      eq(rank.lookup(cands, without, { limit = 50 }), rank.lookup(cands, with, { limit = 50 }), cands[1])
+    end
+    -- below 30 the fuzzy tier can match without a substring: no prefilter there
+    eq(rank.lookup({ "gta" }, without, { min_score = 5 }), rank.lookup({ "gta" }, with, { min_score = 5 }))
+  end)
 end)

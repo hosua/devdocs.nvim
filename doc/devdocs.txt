@@ -31,7 +31,8 @@ removes docs. The README has the long version.
                          visual selection, or {text}
   example [text]         only the code examples of that entry
   open {doc} [entry]     open a doc by slug or name, optionally at an entry
-  search [query]         grep every enabled doc; "@css ..." narrows to one
+  search [query]         grep the buffer's docs, then the newest version of
+                         every other doc; "@css ..." narrows to one
   list                   the manager
   install [doc]          docs for the current buffer, or a named doc.
                          ! reinstalls
@@ -40,6 +41,10 @@ removes docs. The README has the long version.
   update [doc]           reinstall one doc, or every outdated one
   sync                   install what `import.docs` asks for
   status                 running install jobs
+  detect                 what this buffer resolved to and why (root,
+                         language, doc version and its source)
+  resync                 forget what was detected for this project and
+                         detect again. ! forgets every project
   recent                 recently viewed pages
   mirror [--force] [--scrape]
                          clone freeCodeCamp/devdocs, download every doc
@@ -94,6 +99,16 @@ require("devdocs").setup({opts})
                                                           *devdocs-lookup*
   lookup.fallback     "search" | "lsp_hover" | "none" when the symbol has
                       no doc entry
+  lookup.scope        "buffer": only the buffer's docs when its language is
+                      known, else the newest version of every doc.
+                      "all": the buffer's docs, then every installed doc
+
+A lookup's language comes from the filetype, then the file extension, the
+shebang, then shell dotfiles (as $SHELL). Its version, for docs with several
+installed versions, from an attached language server, the shebang, project
+files (nearest package, then the git root), then the installed tool. Results
+are cached per buffer and per project (projects.json, re-checked against the
+files' mtimes once per session). See :DevDocs detect and :DevDocs resync.
                                                  *devdocs-extra_filetypes*
   extra_filetypes     filetype -> { doc bases }
   extra_mason         Mason package -> { doc bases }
@@ -126,6 +141,8 @@ require("devdocs").setup({opts})
 
   data_dir/manifest.json          cached docs list
   data_dir/state.json             enabled docs, recent pages (version 1)
+  data_dir/projects.json          detected languages/versions per project,
+                                  tool versions (version 1; safe to delete)
   data_dir/docs/<slug>/meta.json  what is installed (version 1)
   data_dir/docs/<slug>/entries.tsv
   data_dir/docs/<slug>/anchors.json

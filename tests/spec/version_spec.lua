@@ -146,4 +146,68 @@ describe("version", function()
       eq(nil, version.detect("node", root))
     end)
   end)
+
+  it("records every file a detector tried, present or not", function()
+    local root = tmpdir()
+    write(root, ".nvmrc", "v20.1.0")
+    local v, files = version.detect_with_files("node", { root })
+    eq("20.1.0", v)
+    eq(root .. "/.nvmrc", files[1])
+    local _, none = version.detect_with_files("python", { tmpdir(), root })
+    ok(vim.tbl_contains(none, root .. "/.python-version"), "absent files are recorded too")
+  end)
+
+  it("tries each version dir in order", function()
+    local sub, top = tmpdir(), tmpdir()
+    write(top, ".nvmrc", "18")
+    eq("18", (version.detect_with_files("node", { sub, top })))
+    write(sub, ".nvmrc", "22")
+    eq("22", (version.detect_with_files("node", { sub, top })))
+  end)
+
+  it("reads the typescript the project actually installed", function()
+    local root = tmpdir()
+    write(root, "package.json", '{"devDependencies":{"typescript":"^5.0.0"}}')
+    write(root, "node_modules/typescript/package.json", '{"version":"5.4.5"}')
+    eq("5.4.5", version.detect("typescript", root))
+  end)
+
+  it("reads the Lua runtime from an attached lua_ls", function()
+    local client = { name = "lua_ls", settings = { Lua = { runtime = { version = "LuaJIT" } } } }
+    eq({ "5.1", "lsp:lua_ls" }, { version.from_lsp("lua", { client }) })
+    client.settings.Lua.runtime.version = "Lua 5.4"
+    eq("5.4", (version.from_lsp("lua", { client })))
+    eq(nil, version.from_lsp("lua", { { name = "lua_ls", settings = {} } }))
+    eq(nil, version.from_lsp("python", { client }))
+  end)
+
+  it("asks pyright's interpreter for the Python version", function()
+    local saved = version._run
+    version._run = function(cmd)
+      eq({ "/venv/bin/python", "--version" }, cmd)
+      return "Python 3.11.9"
+    end
+    local client = { name = "basedpyright", config = { settings = { python = { pythonPath = "/venv/bin/python" } } } }
+    eq({ "3.11.9", "lsp:basedpyright" }, { version.from_lsp("python", { client }) })
+    version._run = saved
+  end)
+
+  it("parses installed tool versions", function()
+    local saved = version._run
+    local outputs = {
+      fish = "fish, version 4.0.2",
+      node = "v22.11.0",
+      bash = "GNU bash, version 5.3.20(1)-release (x86_64-pc-linux-gnu)",
+      go = "go version go1.23.2 linux/amd64",
+    }
+    version._run = function(cmd)
+      return outputs[cmd[1]]
+    end
+    eq("4.0.2", version.tool_version "fish")
+    eq("22.11.0", version.tool_version "node")
+    eq("5.3.20", version.tool_version "bash")
+    eq("1.23.2", version.tool_version "go")
+    eq(nil, version.tool_version "rust")
+    version._run = saved
+  end)
 end)

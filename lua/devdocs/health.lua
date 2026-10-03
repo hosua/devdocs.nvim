@@ -101,6 +101,21 @@ function M.check()
     end
     h.ok(("state.json v%d, %d disabled, %d recent pages"):format(st.version, off, #st.recent))
   end
+  local pfile = require("devdocs.projects").file()
+  local prec, perr = store.read_json(pfile)
+  if prec then
+    h.ok(
+      ("projects.json: %d project dirs, %d tool versions cached (%s; :DevDocs resync to redo)"):format(
+        vim.tbl_count(prec.roots or {}),
+        vim.tbl_count(prec.tools or {}),
+        pfile
+      )
+    )
+  elseif perr ~= "missing" then
+    h.warn(("projects.json: %s (safe to delete: it is only a cache)"):format(perr))
+  else
+    h.info "projects.json: nothing detected yet"
+  end
   local docs, at = manifest.cached()
   if docs then
     local age = os.time() - (at or 0)
