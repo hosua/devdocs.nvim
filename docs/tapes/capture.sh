@@ -4,11 +4,12 @@
 #   DEVDOCS_SRC=~/.local/share/nvim/devdocs DEVDOCS_LAZY=~/.local/share/nvim/lazy \
 #     bash docs/tapes/capture.sh [shot...]
 #
-# Shots: viewer examples search list apply health (default: all).
+# Shots: lookup-demo list-demo (GIFs), examples search apply health (PNGs);
+# default: all.
 # DEVDOCS_SRC is only read: manifest.json, releases/ and a few docs are copied
 # into /tmp/devdocs-demo, together with this commit of the plugin
 # (git archive), so the frames show /tmp/devdocs-demo paths and nothing from
-# your home. Needs Xvfb, xterm, xdotool, ImageMagick; runs on display :99.
+# your home. Needs Xvfb, xterm, xdotool, ImageMagick, ffmpeg; runs on :99.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 SRC=${DEVDOCS_SRC:?set DEVDOCS_SRC to an installed devdocs data dir}
@@ -18,7 +19,7 @@ DPY=${DEMO_DISPLAY:-:99}
 OUT=$PWD/docs/media
 SLUGS=(cpp 'lua~5.4' 'lua~5.1' 'python~3.12' 'python~3.13' css javascript node)
 shots=("$@")
-[ ${#shots[@]} -eq 0 ] && shots=(viewer examples search list apply health)
+[ ${#shots[@]} -eq 0 ] && shots=(lookup-demo list-demo examples search apply health)
 
 rm -rf -- "$DEMO"
 mkdir -p "$DEMO"/{repo,data/docs,home,work,xdg/{config,data,state,cache}} "$OUT"
@@ -76,17 +77,52 @@ shot() {
   magick "$OUT/$1.png" -strip -define png:compression-level=9 "$OUT/$1.png"
   echo "  $OUT/$1.png"
 }
+# rec <name> ... stop_rec: record the editor window, then a 2-pass palette GIF
+rec() {
+  rec_name=$1
+  geo=$(DISPLAY=$DPY xdotool getwindowgeometry --shell "$win")
+  w=$(sed -n 's/^WIDTH=//p' <<<"$geo"); h=$(sed -n 's/^HEIGHT=//p' <<<"$geo")
+  x=$(sed -n 's/^X=//p' <<<"$geo"); y=$(sed -n 's/^Y=//p' <<<"$geo")
+  ffmpeg -loglevel error -y -f x11grab -draw_mouse 0 -framerate 24 -video_size "$((w / 2 * 2))x$((h / 2 * 2))" \
+    -i "$DPY+$x,$y" -c:v libx264 -preset ultrafast -pix_fmt yuv420p "$DEMO/$rec_name.mp4" &
+  rec_pid=$!
+  sleep 0.8
+}
+stop_rec() {
+  sleep 1.5 # hold the last frame
+  kill -INT "$rec_pid" && wait "$rec_pid" || true
+  local f="fps=12,scale=900:-1:flags=lanczos"
+  ffmpeg -loglevel error -y -i "$DEMO/$rec_name.mp4" -vf "$f,palettegen=max_colors=128:stats_mode=diff" "$DEMO/pal.png"
+  ffmpeg -loglevel error -y -i "$DEMO/$rec_name.mp4" -i "$DEMO/pal.png" \
+    -lavfi "$f [x]; [x][1:v] paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" "$OUT/$rec_name.gif"
+  echo "  $OUT/$rec_name.gif ($(du -h "$OUT/$rec_name.gif" | cut -f1))"
+}
+slow() { DISPLAY=$DPY xdotool type --delay 70 "$1"; }
 
 for s in "${shots[@]}"; do
   case $s in
-  viewer) # symbol lookup on `cout` opens its entry in the viewer float
-    start main.cpp && keys 6 G 0 7 l && cmd ':DevDocs definition' && shot viewer-definition 1.5 ;;
+  lookup-demo) # look up cout, scroll, examples, back, whole page, close
+    start main.cpp && rec lookup-demo
+    keys 6 G && sleep 0.4 && keys 0 7 l && sleep 0.6
+    slow ':DevDocs definition' && keys Return && sleep 2.2
+    keys j j j j j j j j && sleep 1.2
+    keys e && sleep 2.2
+    keys BackSpace && sleep 1.2
+    keys p && sleep 2.2
+    keys q && stop_rec ;;
+  list-demo) # browse the manager, expand Lua, mark python versions, apply menu
+    start main.cpp && rec list-demo
+    slow ':DevDocs list' && keys Return && sleep 2
+    keys j && sleep 0.3 && keys j && sleep 0.3 && keys j && sleep 0.5 && keys Tab && sleep 1.8
+    keys Tab && sleep 0.6
+    slow '/python' && keys Return && sleep 0.8 && keys Tab && sleep 1.2
+    keys j && sleep 0.5 && keys m && sleep 0.8 && keys m && sleep 1.2
+    keys S && sleep 3 && keys n && sleep 0.8 && keys M && sleep 0.8
+    keys q && stop_rec ;;
   examples) # `e` in the viewer narrows to the section's examples
     start main.cpp && keys 6 G 0 7 l && cmd ':DevDocs definition' && sleep 1.5 && keys e && shot viewer-examples ;;
   search) # telescope grep across the buffer's docs
     start main.cpp && cmd ':DevDocs search push_back' && shot search-picker 2.5 ;;
-  list) # the manager, grouped by language, Lua expanded
-    start main.cpp && cmd ':DevDocs list' && sleep 1.5 && keys j j j Tab && shot list-manager 1.5 ;;
   apply) # mark python~3.14 (install) and python~3.13 (uninstall), then S
     start main.cpp && cmd ':DevDocs list' && sleep 1.5 && typ '/python' && keys Return Tab j m m S &&
       shot list-apply 1.2 ;;

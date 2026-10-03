@@ -67,10 +67,10 @@
       "decided": "2026-10-03",
       "notes": "Xvfb+xterm+xdotool script docs/tapes/capture.sh (no vhs); re-run: DEVDOCS_SRC=<data dir> DEVDOCS_LAZY=<lazy dir> bash docs/tapes/capture.sh [shot...]",
       "files": [
-        "docs/media/viewer-definition.png",
+        "docs/media/lookup-demo.gif",
+        "docs/media/list-demo.gif",
         "docs/media/viewer-examples.png",
         "docs/media/search-picker.png",
-        "docs/media/list-manager.png",
         "docs/media/list-apply.png",
         "docs/media/checkhealth.png",
         "docs/tapes/capture.sh",

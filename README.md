@@ -7,7 +7,7 @@ cursor opens its page in a float, examples come up on their own, every
 installed doc is grepped with ripgrep, and a Mason-like manager installs,
 updates and removes docs.
 
-![The symbol under the cursor (std::cout) opened in the viewer float, with the key hints in its footer](docs/media/viewer-definition.png)
+![Looking up std::cout: the viewer float opens on its entry, e narrows to the examples, backspace returns, p opens the whole page](docs/media/lookup-demo.gif)
 
 The data comes from the same files devdocs' own `thor docs:download` uses
 (one tarball per doc from `downloads.devdocs.io`, the docs list from
@@ -201,7 +201,7 @@ Inside the **manager** each language is listed once, under *Installed* (any
 version installed) or *Available*; `▸` expands it into every version DevDocs
 has. The columns:
 
-![:DevDocs list with C++, CSS, JavaScript, Lua, Node.js and Python installed and Lua expanded into its versions](docs/media/list-manager.png)
+![The manager: expanding Lua into its versions, filtering to Python, marking 3.14 to install and 3.13 to uninstall, and the apply menu with the disk summary](docs/media/list-demo.gif)
 
 | column | |
 |---|---|
