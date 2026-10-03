@@ -27,6 +27,9 @@ local known_globals = {}
 for k in pairs(_G) do
   known_globals[k] = true
 end
+-- Neovim 0.11.0's own treesitter runtime leaks `_` (languagetree.lua
+-- _get_injections: `start_line, _, end_line = ...` with no `local`).
+known_globals._ = true
 
 local dir = root .. "/tests/" .. (arg[1] or "spec")
 local specs = vim.fn.globpath(dir, "**/*_spec.lua", false, true)

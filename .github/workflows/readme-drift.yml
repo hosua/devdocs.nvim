@@ -1,0 +1,110 @@
+# readme-drift.yml - installed by the gh-readme-project-maintenance skill.
+#
+# Zero-AI README guard. Two jobs, both free on public repos (standard
+# ubuntu-latest runner, typically < 1 min each):
+#
+#   drift       - on PRs: if files that define user-facing surface (config
+#                 defaults, CLI parsers, keymaps, manifests) changed but
+#                 README.md did not, emit a WARNING annotation + job summary.
+#                 Does NOT fail the PR unless repo variable
+#                 README_DRIFT_STRICT is "true".
+#                 Escape hatch: add the PR label `no-readme-needed`.
+#   link-check  - weekly (Mon 06:17 UTC) + manual: lychee checks every link in
+#                 README.md and docs/**/*.md. Reports in the job summary;
+#                 fails only when README_DRIFT_STRICT is "true".
+#
+# SURFACE_REGEX below is filled in per repo by the skill (extended regex,
+# matched against repo-relative paths from `git diff --name-only`).
+#
+# Remove: delete this file. Nothing else depends on it.
+
+name: readme-drift
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: readme-drift-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  drift:
+    if: >-
+      github.event_name == 'pull_request' &&
+      !contains(github.event.pull_request.labels.*.name, 'no-readme-needed')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      # FILLED IN BY THE SKILL - paths whose changes usually mean README drift.
+      SURFACE_REGEX: '^(lua/devdocs/(config|commands|init)\.lua|lua/devdocs/ui/.*\.lua|plugin/.*\.lua)$'
+      README_PATH: README.md
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      STRICT: ${{ vars.README_DRIFT_STRICT == 'true' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0 # need history to find the merge base
+
+      - name: Compare surface changes against README
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"
+          surface="$(grep -E "$SURFACE_REGEX" <<<"$changed" || true)"
+          readme_touched="$(grep -Fx "$README_PATH" <<<"$changed" || true)"
+
+          if [[ -z "$surface" ]]; then
+            echo "No user-facing surface files changed." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [[ -n "$readme_touched" ]]; then
+            echo "Surface files changed and $README_PATH was updated." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          {
+            echo "### README may be stale"
+            echo "These files define user-facing behaviour but \`$README_PATH\` was not changed:"
+            echo
+            while IFS= read -r f; do echo "- \`$f\`"; done <<<"$surface"
+            echo
+            echo "Update the README, run the \`gh-readme-project-maintenance\` skill, or add the"
+            echo "\`no-readme-needed\` label if nothing user-visible changed."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          while IFS= read -r f; do
+            echo "::warning file=$f,title=README drift::$f changed but $README_PATH did not"
+          done <<<"$surface"
+
+          if [[ "$STRICT" == "true" ]]; then
+            echo "::error::README_DRIFT_STRICT is true - failing."
+            exit 1
+          fi
+
+  link-check:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Check links with lychee
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2
+        with:
+          args: >-
+            --no-progress
+            --max-retries 3
+            --accept 200,206,429
+            README.md
+            './docs/**/*.md'
+          fail: ${{ vars.README_DRIFT_STRICT == 'true' }}
+          failIfEmpty: false
+          jobSummary: true

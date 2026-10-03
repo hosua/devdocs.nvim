@@ -7,56 +7,131 @@ cursor opens its page in a float, examples come up on their own, every
 installed doc is grepped with ripgrep, and a Mason-like manager installs,
 updates and removes docs.
 
-```
-#include <iostream>
-using namespace std;
-int main╭──────────────── C++ › Input/output › std::cout ────────────────╮
-~       │# std::cout, std::wcout                                         │
-~       │                                                                │
-~       │extern std::ostream cout;                                       │
-~       │                                                                │
-~       │extern std::wostream wcout;                                     │
-~       │                                                                │
-~       │The global objects std::cout and std::wcout control output      │
-~       │to a stream buffer of implementation-defined type (derived from │
-~       │std::streambuf), associated with the standard C output stream   │
-~       │stdout.                                                         │
-~       ╰─ o browser  y url  ⏎ follow  ⌫ back  e examples  p page  s search  ? help  q close ─╯
-```
+![Looking up std::cout: the viewer float opens on its entry, e narrows to the examples, backspace returns, p opens the whole page](docs/media/lookup-demo.gif)
 
 The data comes from the same files devdocs' own `thor docs:download` uses
 (one tarball per doc from `downloads.devdocs.io`, the docs list from
 `devdocs.io/docs.json`), or from a self-hosted devdocs, or from a local
 mirror built by `:DevDocs mirror`.
 
-## Requirements
+## Dependencies
 
-| | |
-|---|---|
-| Neovim | 0.11 or newer |
-| `curl`, `tar` | downloading and extracting docs |
-| `rg` (ripgrep) | `:DevDocs search` |
-| treesitter `markdown` parser | viewer highlighting (ships with Neovim) |
-| telescope.nvim (optional) | search picker and candidate picker; without it search fills the quickfix list and candidates use `vim.ui.select` |
-| language parsers (optional) | `std::cout`, `os.path.join`, `arr.map` are resolved from the syntax tree; without a parser the word under the cursor is used |
-| `git`, `docker` (optional) | `:DevDocs mirror` |
+| Dependency | | Without it |
+|---|---|---|
+| Neovim 0.11+ | required | - |
+| `curl`, `tar` | required | docs can't be downloaded or extracted |
+| `rg` (ripgrep) | required for search | `:DevDocs search` reports `rg is not installed`; lookups, the viewer and the manager still work |
+| treesitter `markdown` parser | required (ships with Neovim) | the viewer shows plain text, no highlighting |
+| [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) | optional | search results go to the quickfix list, and an ambiguous lookup asks through `vim.ui.select` |
+| treesitter parsers for your languages | optional | `std::cout`, `os.path.join`, `arr.map` can't be read from the syntax tree; the word under the cursor is looked up instead |
+| language servers (`lua_ls`, pyright, …) | optional | the doc version comes from project files, the shebang or `<tool> --version` instead of the server's settings |
+| [mason.nvim](https://github.com/mason-org/mason.nvim) | optional | an empty `import.docs` derives nothing; docs are still installed per buffer (`install_as_needed`) |
+| `git`, `docker` | optional | no `:DevDocs mirror` (building a local mirror of every doc) |
+
+`:checkhealth devdocs` checks all of these.
 
 ## Install
 
-Requires Neovim >= 0.11. With lazy.nvim:
+### lazy.nvim
 
 ```lua
 {
   "hosua/devdocs.nvim",
+  dependencies = {
+    "nvim-telescope/telescope.nvim", -- optional: search and candidate pickers
+    "nvim-lua/plenary.nvim", -- telescope's own dependency
+  },
   cmd = { "DevDocs", "DevDocsInstall", "DevDocsShowDefinition", "DevDocsShowExample", "DevDocsSearch", "DevDocsList" },
   event = "VeryLazy", -- so install_as_needed and the import sync run without a keypress
   opts = {},
 }
 ```
 
-`opts = {}` is enough. On first use the docs list is fetched and cached for a
-day; nothing is downloaded until a buffer needs a doc (`install_as_needed`),
-`import.docs` asks for one, or you install one.
+<details><summary>vim.pack (built in, Neovim 0.12+)</summary>
+
+```lua
+vim.pack.add({
+  "https://github.com/hosua/devdocs.nvim",
+  "https://github.com/nvim-lua/plenary.nvim", -- for telescope
+  "https://github.com/nvim-telescope/telescope.nvim", -- optional: search and candidate pickers
+})
+require("devdocs").setup({})
+```
+
+</details>
+
+<details><summary>vim-plug</summary>
+
+```vim
+Plug 'hosua/devdocs.nvim'
+Plug 'nvim-lua/plenary.nvim'          " for telescope
+Plug 'nvim-telescope/telescope.nvim'  " optional: search and candidate pickers
+" after plug#end():
+lua require("devdocs").setup({})
+```
+
+</details>
+
+<details><summary>Manual</summary>
+
+```bash
+git clone https://github.com/hosua/devdocs.nvim ~/.local/share/nvim/site/pack/plugins/start/devdocs.nvim
+```
+
+Then call `require("devdocs").setup({})` in `init.lua`.
+
+</details>
+
+The `:DevDocs` commands exist without `setup()`, but `setup()` starts
+`install_as_needed` and the import sync, so call it (lazy.nvim's `opts` does).
+On first use the docs list is fetched and cached for a day; nothing is
+downloaded until a buffer needs a doc (`install_as_needed`), `import.docs`
+asks for one, or you install one.
+
+### Configurations
+
+**Minimal**: install docs for whatever you open, in a float.
+
+```lua
+opts = {}
+```
+
+**Ask before downloading, pick docs up front**: for slow or metered
+connections. Nothing installs without a yes, and the listed docs stay
+installed.
+
+```lua
+opts = {
+  install_as_needed = "prompt",
+  import = { docs = { "lua~5.4", "python*", "javascript", "css" }, recent_only = true },
+}
+```
+
+**Side split, LSP hover as fallback**: docs open next to your code; a symbol
+with no devdocs entry falls back to `vim.lsp.buf.hover()`.
+
+```lua
+opts = {
+  view = { mode = "vsplit" },
+  lookup = { fallback = "lsp_hover" },
+}
+```
+
+**Offline mirror**: after `:DevDocs mirror`, install and update from the
+local tree instead of the CDN.
+
+```lua
+opts = {
+  install = {
+    source = "json",
+    doc_url = "file://" .. vim.fn.stdpath "data" .. "/devdocs/mirror/devdocs/public/docs/{slug}/{file}",
+    manifest_url = "file://" .. vim.fn.stdpath "data" .. "/devdocs/mirror/devdocs/public/docs/docs.json",
+  },
+}
+```
+
+Every option and its default: [Configuration](#configuration). Suggested
+keymaps: [Keymaps](#keymaps).
 
 ## Commands
 
@@ -70,7 +145,7 @@ One command with subcommands, plus flat aliases for each action.
 | `search [query]` | `:DevDocsSearch` | grep the buffer's docs, then the newest version of every other enabled doc; `@css …` narrows to one doc (any version: `@python~3.9`) |
 | `list` | `:DevDocsList` | the manager |
 | `install [doc]` | `:DevDocsInstall` | docs for the current buffer (right version), or a named doc. `!` reinstalls |
-| `install-all` | `:DevDocsInstallAll` | every doc devdocs offers (asks; `!` skips the question). Already installed docs are skipped |
+| `install-all` | `:DevDocsInstallAll` | every doc devdocs offers (asks; `!` skips the question). Installed docs that are current are skipped; outdated ones are updated |
 | `uninstall <doc>` | `:DevDocsUninstall` | remove a doc (asks; `!` skips) |
 | `prune [lang]` | `:DevDocsPrune` | delete old versions. Per language it keeps (1) the newest installed version that is enabled, or the newest installed one when every installed version is disabled — versions compare across the docs list and the installed `meta.json`, so an install newer than the docs list is kept — and (2) every installed version a project pins in `projects.json` (the version detected for that project resolves to it); it deletes the other installed versions. `lang` limits it to one language. Asks with the full list and names any pinned versions it kept (`!` skips). A language with one installed version is never touched |
 | `update [doc]` | `:DevDocsUpdate` | reinstall one doc, or every installed doc the docs list shows as newer |
@@ -113,14 +188,20 @@ Inside the **viewer**:
 | `s` | search inside this doc |
 | `?` | help |
 
+![The viewer after pressing e: only the examples of the std::cout section](docs/media/viewer-examples.png)
+
 Inside the **search picker** (telescope): `<C-t>` toggles grep / entry-name
-mode, `<CR>` opens in the viewer, `<C-x>` / `<C-v>` / `<C-t>ab` open in a
-split / vsplit / tab, `<C-o>` opens the page in the browser, `<C-y>` yanks
+mode, `<CR>` opens in the viewer, `<C-x>` / `<C-v>` open in a split /
+vsplit, `<C-o>` opens the page in the browser, `<C-y>` yanks
 its url. Start the prompt with `@slug ` to search one doc.
+
+![:DevDocs search push_back grepping the C++ docs, with a preview of the matching page](docs/media/search-picker.png)
 
 Inside the **manager** each language is listed once, under *Installed* (any
 version installed) or *Available*; `▸` expands it into every version DevDocs
 has. The columns:
+
+![The manager: expanding Lua into its versions, filtering to Python, marking 3.14 to install and 3.13 to uninstall, and the apply menu with the disk summary](docs/media/list-demo.gif)
 
 | column | |
 |---|---|
@@ -162,6 +243,8 @@ behind the plan's back) and say `N marked: S applies them (M clears)`;
 apply with `S` / `:w` or clear with `M` to get them back. `D`, `gD`, `U`
 and `A` still work (they ask first).
 
+![Marked mode: python~3.14 marked to install and python~3.13 to uninstall, with the apply menu showing disk used, freed and net](docs/media/list-apply.png)
+
 The date next to each doc is when that version was **released upstream**
 (e.g. `angular~22` → 2026-06-03, `python~3.12` → 2023-10-02), taken from the
 [endoflife.date API](https://endoflife.date/docs/api/v1/) (`/api/v1/products/<product>`: each
@@ -178,13 +261,14 @@ the stale cache is used, nothing is reported). Set
 A lookup searches only the docs of the buffer's language, in the version its
 project uses, so it stays instant with hundreds of docs installed.
 
-1. **Language**, first that matches: `extra_filetypes`, file-name rules
-   (`package.json`, `Dockerfile`, `.npmrc`, …), the filetype, the file
-   extension (`.hh`, `.cppm`, `.tofu`, `.pyi`, … for buffers whose filetype is
+1. **Language**: `extra_filetypes`, file-name rules (`package.json`,
+   `Dockerfile`, `.npmrc`, …) and the filetype, all merged. If none of
+   those match, the first of: the file extension (`.hh`, `.cppm`, `.tofu`, `.pyi`, … for buffers whose filetype is
    empty or unknown), the shebang (`#!/usr/bin/env -S python3.12`), then shell
    dotfiles (`.bashrc`, `.xinitrc`, other `*rc` files) as your `$SHELL`.
-   Nothing matched: the newest version of every installed doc.
-2. **Version**, only for docs with more than one installed version: an
+   Nothing matched: the newest enabled version of every installed doc.
+2. **Version**, only for docs with more than one installed version (and
+   not with `import.recent_only = true`): an
    attached language server (`lua_ls` `Lua.runtime.version`, pyright's
    `python.pythonPath`), a version in the shebang, the project's files
    (`.nvmrc`, `.python-version`, `pyproject.toml`, `go.mod`, `.luarc.json`,
@@ -200,7 +284,8 @@ Answers are cached per buffer for the session and per project in
 The first time a session touches a project those files are checked again, so
 editing `.nvmrc` is noticed on the next start. `:DevDocs resync` forces it now;
 `:DevDocs detect` shows what was decided and why. `lookup.scope = "all"` brings
-back searching every installed doc after the buffer's own.
+back searching every enabled installed version after the buffer's own docs,
+in lookups and `:DevDocs search`.
 
 ### Keywords vs. your own names
 
@@ -402,7 +487,8 @@ not newer than it is used, else the newest. Add your own with
 `:DevDocs install-all` downloads every doc (about 8.7 GB of HTML as of
 2026-09, converted to a similar amount of markdown) with `install.max_jobs`
 parallel jobs and exponential backoff when the CDN answers 429. It is
-resumable: docs already on disk are skipped.
+resumable: installed docs that are current are skipped, outdated ones are
+updated.
 
 To avoid the public CDN entirely, `:DevDocs mirror` clones
 [freeCodeCamp/devdocs](https://github.com/freeCodeCamp/devdocs) into
@@ -500,6 +586,8 @@ installs run, `""` otherwise, for your statusline).
 is loaded, the tools it found, the data directory and its size, installed
 docs, the docs list age, the release dates cache and the install source.
 
+![:checkhealth devdocs with every check passing](docs/media/checkhealth.png)
+
 - **"no docs installed for this buffer"**: `:DevDocs install` fetches the
   right ones; `:DevDocs list` shows what exists. Unknown filetypes need
   `extra_filetypes`.
@@ -508,6 +596,15 @@ docs, the docs list age, the release dates cache and the install source.
 - **The wrong version opens**: `:DevDocs list` shows what is installed;
   `import.all = true` keeps every version and switches per project. The
   detected version comes from the project files listed above.
+
+## Changelog
+
+| Version | Highlights |
+|---|---|
+| [0.2.0](https://github.com/hosua/devdocs.nvim/releases/tag/v0.2.0) | `:DevDocs list` grouped by language with bulk delete/prune; faster scoped lookups; `p` opens at the current section |
+| [0.1.0](https://github.com/hosua/devdocs.nvim/releases/tag/v0.1.0) | First release: installer, converter, viewer, search picker, list manager, mirror, checkhealth |
+
+See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Development
 

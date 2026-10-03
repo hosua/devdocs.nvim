@@ -1,0 +1,98 @@
+# .github/workflows/ci-health.yml - installed by the gh-cicd-project-maintenance skill.
+#
+# Zero-AI bit-rot alarm. Once a week it re-runs the project's CI on the default
+# branch even if nobody pushed, so breakage caused by things OUTSIDE the repo
+# (runner image updates, a toolchain "stable"/"nightly" moving, a deleted
+# action tag, an expired upstream URL) shows up within a week instead of on
+# the next unrelated PR.
+#
+#   ci      - calls the existing CI workflow as a reusable workflow. REQUIRES
+#             `workflow_call:` under `on:` in ci.yml (one line;
+#             it does not change how CI runs on push/PR).
+#   report  - always runs after `ci`:
+#               failure -> open ONE issue labelled `ci-health`, or comment on
+#                          the one already open (never a pile of duplicates)
+#               success -> close the open `ci-health` issue, if any
+#
+# Cost: one extra CI run per week on ubuntu-latest (free on public repos;
+# private repos: ~(CI minutes) x 4-5 per month from the 2,000 included).
+# Gotcha: in PUBLIC repos GitHub auto-disables scheduled workflows after 60
+# days with no repository activity. Re-enable: gh workflow enable ci-health.yml
+#
+# Remove: delete this file and the `workflow_call:` line from ci.yml.
+
+name: ci-health
+
+on:
+  schedule:
+    - cron: "23 7 * * 1" # Mondays 07:23 UTC (off the top of the hour = less queueing)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Deliberately NOT the same group as ci.yml's concurrency block: a reusable
+# workflow sees the caller's `github` context, and identical groups with
+# cancel-in-progress would cancel the run that is already going.
+concurrency:
+  group: ci-health
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+    # secrets: inherit   # only if the CI workflow needs repo secrets
+
+  report:
+    needs: ci
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write # open/comment/close the ci-health issue; nothing else
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RESULT: ${{ needs.ci.result }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      SHA: ${{ github.sha }}
+      LABEL: ci-health
+    steps:
+      - name: Open, update, or close the ci-health issue
+        shell: bash
+        run: |
+          set -euo pipefail
+          open="$(gh issue list --label "$LABEL" --state open --limit 1 --json number --jq '.[0].number // empty')"
+          short="${SHA:0:7}"
+
+          if [[ "$RESULT" == "success" ]]; then
+            if [[ -n "$open" ]]; then
+              gh issue close "$open" --comment "Scheduled CI is green again on \`$short\`: $RUN_URL"
+            fi
+            echo "Scheduled CI passed on $short." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # failure | cancelled | skipped -> something needs a human
+          body="Scheduled CI on the default branch finished with **$RESULT** at \`$short\`.
+
+          Run: $RUN_URL
+
+          Nothing in the repo may have changed: likely causes are a runner image
+          update, a moved toolchain version, or a deprecated/removed action.
+          Triage: \`gh run view ${{ github.run_id }} --log-failed\`, or run the
+          gh-cicd-project-maintenance skill.
+
+          This issue closes itself the next time scheduled CI passes."
+
+          if [[ -n "$open" ]]; then
+            gh issue comment "$open" --body "Still failing ($RESULT) at \`$short\`: $RUN_URL"
+          else
+            gh label create "$LABEL" --color B60205 \
+              --description "Scheduled CI on the default branch is failing" 2>/dev/null || true
+            gh issue create --title "Scheduled CI is failing on the default branch" \
+              --label "$LABEL" --body "$body"
+          fi
+          echo "Scheduled CI $RESULT on $short - issue opened/updated." >> "$GITHUB_STEP_SUMMARY"
