@@ -41,7 +41,10 @@ mirror built by `:DevDocs mirror`.
     "nvim-telescope/telescope.nvim", -- optional: search and candidate pickers
     "nvim-lua/plenary.nvim", -- telescope's own dependency
   },
-  cmd = { "DevDocs", "DevDocsInstall", "DevDocsShowDefinition", "DevDocsShowExample", "DevDocsSearch", "DevDocsList" },
+  cmd = {
+    "DevDocs", "DevDocsShowDefinition", "DevDocsShowExample", "DevDocsOpen", "DevDocsSearch", "DevDocsList",
+    "DevDocsInstall", "DevDocsInstallAll", "DevDocsUninstall", "DevDocsUpdate", "DevDocsPrune", "DevDocsForceCloneAndScrape",
+  },
   event = "VeryLazy", -- so install_as_needed and the import sync run without a keypress
   opts = {},
 }
@@ -141,7 +144,7 @@ One command with subcommands, plus flat aliases for each action.
 |---|---|---|
 | `definition [text]` | `:DevDocsShowDefinition` | page/section for the symbol under the cursor, the visual selection, or `text` |
 | `example [text]` | `:DevDocsShowExample` | only the code examples of that entry |
-| `open <doc> [entry]` | `:DevDocsOpen` | open a doc by slug/name (`python`, `css`, `node~22_lts`), optionally at an entry |
+| `open [doc] [entry]` | `:DevDocsOpen` | without an entry, the doc's **index**: its types (API, Language, …) with entry counts, expandable into entries, like devdocs.io's sidebar. Without a doc, the current buffer's doc (the version its project uses); with no file open (or one with no docs), the manager, where `<CR>` opens a doc's index. With an entry (`python os.path.join`), that entry. A doc is a slug or name (`python`, `css`, `node~22_lts`) |
 | `search [query]` | `:DevDocsSearch` | grep the buffer's docs, then the newest version of every other enabled doc; `@css …` narrows to one doc (any version: `@python~3.9`) |
 | `list` | `:DevDocsList` | the manager |
 | `install [doc]` | `:DevDocsInstall` | docs for the current buffer (right version), or a named doc. `!` reinstalls |
@@ -167,6 +170,7 @@ local map = vim.keymap.set
 map({ "n", "v" }, "<leader>ds", "<cmd>DevDocs definition<cr>", { desc = "devdocs show definition" })
 map({ "n", "v" }, "<leader>de", "<cmd>DevDocs example<cr>", { desc = "devdocs show example" })
 map("n", "<leader>df", "<cmd>DevDocs search<cr>", { desc = "devdocs search all docs" })
+map("n", "<leader>do", "<cmd>DevDocs open<cr>", { desc = "devdocs open the index of this buffer's doc" })
 map("n", "<leader>dl", "<cmd>DevDocs list<cr>", { desc = "devdocs list / manage docs" })
 map("n", "<leader>di", "<cmd>DevDocs install<cr>", { desc = "devdocs install docs for this buffer" })
 map("n", "<leader>dI", ":DevDocs install ", { desc = "devdocs install a named doc" })
@@ -186,6 +190,7 @@ Inside the **viewer**:
 | `e` | only the examples of this entry, or of the page shown after paging (the whole page's examples when it has none) |
 | `p` | toggle between one page at a time (*paginated*) and the whole doc page (*pages*), keeping your place; the footer shows what `p` switches to (`p pages` / `p paginated`) |
 | `s` | search inside this doc |
+| `I` | the index of this doc, with the page's type expanded and the cursor on it; `I` again (or `<BS>`) returns |
 | `?` | help |
 | `n` / `N` | next / previous section: the next heading of any level, put at the top of the window (`3n` moves three) |
 | `c` / `C` | next / previous chapter: the page's top-level headings (those under the title when the title is the only one) |
@@ -202,6 +207,18 @@ page that holds the next heading, with the cursor on it at the top; turning
 pages is not on the history, `p` and `e` are (`<BS>` undoes them). In the
 examples view they step between examples. `n`/`N` do not repeat a search in
 the viewer: use `/<CR>` and `?<CR>`.
+
+**Inside the index.** `:DevDocs open` (or `I` in the viewer) lists the doc's
+types with their entry counts, under a `▾ Lua   5.4.1` header. `<CR>`/`l`
+expands a type (`▸` → `▾`) and opens an entry, `h` folds, `<Tab>` toggles,
+`zR`/`zM` expand/collapse all, `}`/`{` jump between types, and `/` filters
+entries by name (`<Esc>` clears the filter, `<CR>` keeps it). `d` switches to
+another installed doc's index, `s` searches inside this doc, `o`/`y` open or
+yank the devdocs.io url of the entry under the cursor. An entry opens in the
+viewer; `<BS>` (or `u`) returns to the index as you left it. Docs with a single type
+list their entries directly. Keys: `?`.
+
+![:DevDocs open on a Lua file: the index of lua~5.4 with its types and entry counts, a type expanded, the next type with }, the filter /insert, table.insert opened in the viewer, I back to the index and I again to the page](docs/media/index.gif)
 
 ![Looking up assert in the Lua manual: it opens paginated with the page index (180/256) in the title and p pages in the footer, n turns the page twice, c jumps to the next chapter, p shows the whole page (p paginated), p goes back to the paginated view](docs/media/viewer-paging.gif)
 
@@ -246,8 +263,8 @@ has. The columns:
 | `gD` | the same for every language, like `:DevDocs prune` (asks) |
 | `u` / `U` | update it (a language: its outdated versions) / every outdated doc |
 | `e` | enable / disable it for lookups and search |
-| `<CR>`, double-click | open in the viewer |
-| `o` | open on devdocs.io |
+| `<CR>`, double-click | open the doc's index in the viewer; `<BS>` there comes back to the manager |
+| `o` | open the doc's index on devdocs.io in the browser instead |
 | `/` | live filter (`<Esc>` clears, `<CR>` keeps) |
 | `s` | sort by name / size |
 | `r` | refresh the docs list |
@@ -256,7 +273,7 @@ has. The columns:
 | `q`, `<Esc>` | close |
 
 **Marked mode.** While any mark is pending, the hint line under the status
-line switches to `S apply 3 marked (2 install, 1 uninstall)  m toggle  M clear  ⏎ open  / filter  ? help  q close`, so the bulk apply is always on screen.
+line switches to `S apply 3 marked (2 install, 1 uninstall)  m toggle  M clear  ⏎ index  o browser  / filter  ? help  q close`, so the bulk apply is always on screen.
 `i`, `X`, `V`…`X`/`d` and `u` do nothing then (they would act on one row
 behind the plan's back) and say `N marked: S applies them (M clears)`;
 apply with `S` / `:w` or clear with `M` to get them back. `D`, `gD`, `U`
@@ -600,7 +617,7 @@ in `DevDocsHeader`.
 
 `hooks.on_install(slug)` and `hooks.on_open(slug, path)` are called in
 `pcall`. `require("devdocs")` exposes `definition()`, `example()`,
-`open(doc, entry)`, `search(query)`, `install(slug, { force })`,
+`open(doc?, entry?)`, `search(query)`, `install(slug, { force })`,
 `install_all({ yes })`, `uninstall(slug, { yes })`, `prune({ base, yes })`,
 `update(slug)`, `sync()`,
 `status()`, `recent()` and `statusline()` (a short progress string while

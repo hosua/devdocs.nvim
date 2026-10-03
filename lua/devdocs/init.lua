@@ -28,8 +28,9 @@ function M.example(opts)
   require("devdocs.lookup").run("examples", opts)
 end
 
---- Open a doc (and optionally an entry in it) by name.
---- @param doc string
+--- Open a doc by name: its index (types and entries), or with an entry
+--- name that entry. Without a doc, the current buffer's.
+--- @param doc string|nil
 --- @param entry string|nil
 function M.open(doc, entry)
   require("devdocs.lookup").open(doc, entry)

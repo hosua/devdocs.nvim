@@ -206,12 +206,16 @@ local function pages_of(row)
   return n > 0 and n or nil
 end
 
+--- The fold marks of a collapsible row: a language with versions here, a
+--- type in the doc index.
+M.CHEVRON = { open = "▾ ", closed = "▸ " }
+
 --- Name column: chevron + name for a language, tree glyph + slug for a version.
 local function name_of(row, last)
   if row.kind == "lang" then
     local chevron = "  "
     if #row.children > 1 then
-      chevron = row.expanded and "▾ " or "▸ "
+      chevron = row.expanded and M.CHEVRON.open or M.CHEVRON.closed
     end
     return chevron .. row.name
   end
@@ -312,7 +316,8 @@ M.HINTS = {
   { "D", "prune" },
   { "u", "update" },
   { "e", "enable" },
-  { "⏎", "open" },
+  { "⏎", "index" },
+  { "o", "browser" },
   { "Tab", "versions" },
   { "/", "filter" },
   { "?", "help" },
@@ -344,7 +349,8 @@ function M.hints(state)
     { "S", ("apply %d marked (%s)"):format(n, table.concat(what, ", ")) },
     { "m", "toggle" },
     { "M", "clear" },
-    { "⏎", "open" },
+    { "⏎", "index" },
+    { "o", "browser" },
     { "/", "filter" },
     { "?", "help" },
     { "q", "close" },
@@ -419,7 +425,7 @@ function M.render(state)
     local row = rows[i]
     local line_no = #lines + 1
     if row.kind == "group" then
-      local text = ("▾ %s (%d)"):format(row.label, row.count)
+      local text = ("%s%s (%d)"):format(M.CHEVRON.open, row.label, row.count)
       lines[line_no] = M.cell(text, width)
       spans[#spans + 1] = { row = line_no, col_start = 0, col_end = #text, hl = "DevDocsHeader" }
     else
@@ -645,8 +651,8 @@ M.HELP = {
       { "u", "update it (a language: its outdated versions)" },
       { "U", "update every outdated doc" },
       { "e", "enable / disable it for lookups and search" },
-      { "Enter (<CR>)", "open the doc in the viewer" },
-      { "o", "open it on devdocs.io" },
+      { "Enter (<CR>)", "open the doc's index (types and entries) in the viewer; Backspace there comes back here" },
+      { "o", "open the doc's index on devdocs.io in the browser instead" },
       { "/", "filter as you type (Esc clears, Enter keeps)" },
       { "s", "sort by name / size" },
       { "r", "refresh the docs list from devdocs.io" },

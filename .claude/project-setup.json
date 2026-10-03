@@ -58,7 +58,7 @@
         ".github/workflows/readme-drift.yml"
       ],
       "last_synced": {
-        "commit": "9873d0cce0536ccd1041d5a0cdfbb3cb0473de8f",
+        "commit": "b5cae547913e7989be2507a81c5e93ed9d2bf963",
         "date": "2026-10-03"
       }
     },
@@ -78,7 +78,8 @@
         "docs/media/viewer-paging.gif",
         "docs/media/viewer-help.png",
         "docs/media/explain-popup.gif",
-        "docs/media/explain-popup.png"
+        "docs/media/explain-popup.png",
+        "docs/media/index.gif"
       ]
     },
     "readme": {

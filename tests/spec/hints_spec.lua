@@ -75,11 +75,91 @@ describe("key hints", function()
   end)
 end)
 
+describe("key hints that stay", function()
+  -- keep is read from the hint's `keep` field or its third element
+  local function kept(key, action)
+    return { key, action, true, keep = true }
+  end
+  local LIST = { { "a", "one" }, { "b", "two" }, { "c", "three" }, kept("d", "four"), { "e", "five" } }
+  local function text_of(chunks)
+    return table.concat(vim.tbl_map(function(c)
+      return c[1]
+    end, chunks))
+  end
+
+  it("shows everything when it fits", function()
+    eq(" a one  b two  c three  d four  e five ", text_of(hints.chunks(LIST, 80)))
+  end)
+
+  it("drops trailing hints but never a keep hint", function()
+    local text = text_of(hints.chunks(LIST, 15))
+    eq(" a one  d four ", text)
+  end)
+
+  it("keeps the hint's place in the line", function()
+    local text = text_of(hints.chunks(LIST, 22))
+    eq(" a one  b two  d four ", text)
+  end)
+
+  it("hint text ignores the keep flag", function()
+    eq("a one  b two  c three  d four  e five", hints.text(LIST))
+  end)
+
+  it("the viewer footer keeps ? help and q close on a narrow float", function()
+    local viewer = require "devdocs.ui.viewer"
+    local flagged = {}
+    for _, h in ipairs(viewer.FOOTER) do
+      if h.keep or h[3] then
+        flagged[#flagged + 1] = h[1]
+      end
+    end
+    ok(vim.tbl_contains(flagged, "?") and vim.tbl_contains(flagged, "q"), vim.inspect(flagged))
+    for _, mode in ipairs { "section", "page", "examples" } do
+      local text = text_of(hints.chunks(viewer.footer(mode), 40))
+      ok(text:find("? help", 1, true), text)
+      ok(text:find("q close", 1, true), text)
+      ok(vim.fn.strdisplaywidth(text) <= 40, text)
+    end
+  end)
+end)
+
 describe("key hints in the viewer and the manager help", function()
+  it("the viewer footer has I index right after ⌫ back, in every mode", function()
+    local viewer = require "devdocs.ui.viewer"
+    local function index_of(footer, key)
+      for i, h in ipairs(footer) do
+        if h[1] == key then
+          return i, h
+        end
+      end
+    end
+    for _, footer in ipairs { viewer.FOOTER, viewer.footer "section", viewer.footer "page", viewer.footer "examples" } do
+      local back = index_of(footer, "⌫")
+      local at, hint = index_of(footer, "I")
+      ok(at, "no I hint")
+      eq(back + 1, at)
+      eq("index", hint[2])
+    end
+  end)
+
+  it("the viewer help has an I row naming the index", function()
+    local viewer = require "devdocs.ui.viewer"
+    local lines, spans = viewer.help_lines(200)
+    local row
+    for _, sp in ipairs(spans) do
+      if sp.hl == "DevDocsKey" and lines[sp.row]:sub(sp.col_start + 1, sp.col_end) == "I" then
+        row = lines[sp.row]
+      end
+    end
+    ok(row, "no I key row")
+    ok(row:find("index", 1, true), row)
+    ok(row:find("again returns", 1, true), row)
+  end)
+
   it("the viewer footer is key / action pairs", function()
     local viewer = require "devdocs.ui.viewer"
     eq(
-      "⏎ follow  ⌫ back  e examples  p pages  n/N section  c/C chapter  s search  ? help  q close  o browser  y url",
+      "⏎ follow  ⌫ back  I index  e examples  p pages  n/N section  c/C chapter  s search  ? help  q close  o browser  y url",
       hints.text(viewer.FOOTER)
     )
     local lines, spans = viewer.help_lines(80)

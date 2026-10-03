@@ -7,10 +7,11 @@ CONTENTS                                                     *devdocs-contents*
   2. Commands ............................ |devdocs-commands|
   3. Setup and options ................... |devdocs-setup|
   4. Viewer keys ......................... |devdocs-viewer|
-  5. Manager keys ........................ |devdocs-manager|
-  6. Data on disk ........................ |devdocs-data|
-  7. Highlight groups .................... |devdocs-highlights|
-  8. Health .............................. |devdocs-health|
+  5. Index keys .......................... |devdocs-index|
+  6. Manager keys ........................ |devdocs-manager|
+  7. Data on disk ........................ |devdocs-data|
+  8. Highlight groups .................... |devdocs-highlights|
+  9. Health .............................. |devdocs-health|
 
 ==============================================================================
 1. INTRODUCTION                                          *devdocs-introduction*
@@ -30,7 +31,10 @@ removes docs. The README has the long version.
   definition [text]      page/section of the symbol under the cursor, the
                          visual selection, or {text}
   example [text]         only the code examples of that entry
-  open {doc} [entry]     open a doc by slug or name, optionally at an entry
+  open [doc] [entry]     without an entry, the doc's index (|devdocs-index|);
+                         without a doc, the current buffer's (no file
+                         open: the manager, |devdocs-list|); with an
+                         entry, that entry
   search [query]         grep the buffer's docs, then the newest version of
                          every other doc; "@css ..." narrows to one
   list                   the manager
@@ -177,6 +181,7 @@ files' mtimes once per session). See :DevDocs detect and :DevDocs resync.
   <BS> u      back                 e   only the examples
   p           paginated / whole    s   search inside this doc
               page
+  I           the index of this doc (I again returns)
   ?           help
   n N         next / previous section
   c C         next / previous chapter
@@ -205,12 +210,40 @@ files' mtimes once per session). See :DevDocs detect and :DevDocs resync.
   and `<BS>` puts the cursor back where it was in each view.
 
 ==============================================================================
-5. MANAGER KEYS                                               *devdocs-manager*
+5. INDEX KEYS                                                   *devdocs-index*
+
+:DevDocs open [doc] (or I in the viewer) shows the doc's types with their
+entry counts under a "v Lua 5.4.1" header, expandable into entries, like
+devdocs.io's sidebar. I from a page expands the page's type and puts the
+cursor on its entry, marked with a dot; I again (or <BS>) returns.
+
+  <CR> l      open the entry; on a type, expand it (<CR> also collapses)
+  h           collapse (on an entry: fold its type)
+  <Tab>       expand / collapse
+  zR zM       expand / collapse every type
+  } {         next / previous type
+  /           filter entries by name (<Esc> clears, <CR> keeps)
+  I           back to the page you came from
+  <BS> u      back
+  s           search inside this doc
+  d           the index of another installed doc
+  o y         open on devdocs.io / yank the url of the entry under the cursor
+  j k gg G    move
+  ?           help
+  q <Esc>     close
+
+An entry opens in the viewer and <BS> (or u) returns to the index as you left it
+(expansion, filter, cursor). A doc with a single type lists its entries
+directly.
+
+==============================================================================
+6. MANAGER KEYS                                               *devdocs-manager*
 
   j k gg G <C-d> <C-u> PgUp PgDn   move        } {    next / previous section
   <Tab> l h   expand versions      i   install     X   uninstall (asks)
   u U         update one / all     e   enable or disable
-  <CR>        open in the viewer   o   open on devdocs.io
+  <CR>        the doc's index      o   the index on devdocs.io
+              (<BS> there comes back here)
   /           live filter          s   sort by name / size
   r           refresh the list     A   install every doc (asks)
   m M         mark / clear marks   S :w  apply marks (install + uninstall)
@@ -259,7 +292,7 @@ DevDocs build date used when none is known), Pages, Notes.
   and A still work.
 
 ==============================================================================
-6. DATA ON DISK                                                  *devdocs-data*
+7. DATA ON DISK                                                  *devdocs-data*
 
   data_dir/manifest.json          cached docs list
   data_dir/state.json             enabled docs, recent pages (version 1)
@@ -278,7 +311,7 @@ Deleting docs/<slug> equals :DevDocs uninstall. Files whose version is newer
 than the plugin knows are never overwritten.
 
 ==============================================================================
-7. HIGHLIGHT GROUPS                                        *devdocs-highlights*
+8. HIGHLIGHT GROUPS                                        *devdocs-highlights*
 
   DevDocsNormal NormalFloat        DevDocsBorder FloatBorder
   DevDocsTitle FloatTitle          DevDocsFooter Comment
@@ -302,7 +335,7 @@ titles in DevDocsHeader. Override a group like any other: >lua
   vim.api.nvim_set_hl(0, "DevDocsKey", { fg = "#21BFC2" })
 <
 ==============================================================================
-8. HEALTH                                                      *devdocs-health*
+9. HEALTH                                                      *devdocs-health*
 
 :checkhealth devdocs reports the Neovim version, which copy of the plugin is
 loaded, tools, the data directory, installed docs, the docs list age, the

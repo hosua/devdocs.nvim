@@ -258,34 +258,57 @@ function M.run(mode, opts)
   docs()
 end
 
---- Open a doc by name and optional entry name: `:DevDocs open python os.path.join`.
+--- The installed slug a doc name stands for: the slug itself, else the
+--- newest installed version of a base or name ("lua" -> "lua~5.4"). Warns
+--- (and returns nil) for a doc that is not installed or not known.
 --- @param doc string slug, base, alias or name
---- @param entry_query string|nil
-function M.open(doc, entry_query)
-  local installed = store.installed()
-  local slug
+--- @return string|nil slug
+function M.resolve_doc(doc)
   if store.is_installed(doc) then
-    slug = doc
-  else
-    local candidates = vim.tbl_filter(function(s)
-      return manifest.base(s) == doc or (store.meta(s) or {}).name == doc
-    end, installed)
-    if #candidates == 0 then
-      local d = manifest.cached() and manifest.find(manifest.cached(), doc)
-      if d then
-        notify(("%s is not installed (:DevDocs install %s)"):format(d.slug, d.slug), vim.log.levels.WARN)
-      else
-        notify(("unknown doc %q"):format(doc), vim.log.levels.WARN)
-      end
-      return
-    end
-    slug = manifest.sort_newest(vim.tbl_map(function(s)
-      return { slug = s, version = (store.meta(s) or {}).doc_version or "" }
-    end, candidates))[1].slug
+    return doc
   end
+  local candidates = vim.tbl_filter(function(s)
+    return manifest.base(s) == doc or (store.meta(s) or {}).name == doc
+  end, store.installed())
+  if #candidates == 0 then
+    local d = manifest.cached() and manifest.find(manifest.cached(), doc)
+    if d then
+      notify(("%s is not installed (:DevDocs install %s)"):format(d.slug, d.slug), vim.log.levels.WARN)
+    else
+      notify(("unknown doc %q"):format(doc), vim.log.levels.WARN)
+    end
+    return nil
+  end
+  return manifest.sort_newest(vim.tbl_map(function(s)
+    return { slug = s, version = (store.meta(s) or {}).doc_version or "" }
+  end, candidates))[1].slug
+end
+
+--- The doc `:DevDocs open` means without a name, handed to `cb`: the
+--- current buffer's doc (the version its project uses), else the doc in the
+--- viewer, else (no file open, or one with no docs) the manager instead.
+--- @param cb fun(slug: string)
+local function with_default_doc(cb)
+  local b = detect.buffer()
+  if b.slugs[1] then
+    cb(b.slugs[1])
+    return
+  end
+  local view = viewer.current_view()
+  if view then
+    cb(view.slug)
+    return
+  end
+  -- no file (or one with no docs): the manager, where <CR> opens a doc's index
+  require("devdocs.ui.list").open()
+end
+
+--- The index of an installed doc, or one entry of it.
+--- @param slug string
+--- @param entry_query string|nil
+local function open_in(slug, entry_query)
   if not entry_query or entry_query == "" then
-    local first = store.entries(slug)[1]
-    viewer.open { slug = slug, path = first and first.path or "index", entry = nil, mode = "page" }
+    viewer.open_index(slug)
     return
   end
   local hits = rank.lookup({ entry_query }, index.sources({ slug }, { [slug] = 1 }), { limit = 25 })
@@ -300,6 +323,24 @@ function M.open(doc, entry_query)
     open(hits[1])
   else
     picker.pick_hits(hits, ("DevDocs %s: %s"):format(slug, entry_query), open)
+  end
+end
+
+--- Open a doc: its index without an entry name (`:DevDocs open python`),
+--- else the entry (`:DevDocs open python os.path.join`). Without a doc, the
+--- current buffer's.
+--- @param doc string|nil slug, base, alias or name
+--- @param entry_query string|nil
+function M.open(doc, entry_query)
+  if doc == nil or doc == "" then
+    with_default_doc(function(slug)
+      open_in(slug, entry_query)
+    end)
+    return
+  end
+  local slug = M.resolve_doc(doc)
+  if slug then
+    open_in(slug, entry_query)
   end
 end
 

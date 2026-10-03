@@ -14,6 +14,10 @@ vim.o.winborder = "rounded"
 vim.o.number = true
 vim.o.laststatus = 2
 vim.o.shortmess = vim.o.shortmess .. "I"
+-- xterm + nvim: nvim switches on xterm's modifyOtherKeys, so an xdotool-typed
+-- `}` or `{` arrives as <S-}> and misses the plugin's `}` / `{` mappings. This
+-- is only about the capture's terminal; switch it off again.
+pcall(vim.fn.chansend, vim.v.stderr, "\27[>4;0m")
 require("devdocs").setup {
   data_dir = assert(os.getenv "DEVDOCS_DATA", "DEVDOCS_DATA is not set"),
   install_as_needed = false,

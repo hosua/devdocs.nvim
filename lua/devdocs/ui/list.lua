@@ -446,7 +446,8 @@ local function do_open(row)
   end
   M.close()
   vim.schedule(function()
-    require("devdocs").open(row.slug)
+    -- the doc's index; <BS> there comes back to this list
+    require("devdocs.ui.viewer").open_index(row.slug, { on_back = M.open })
   end)
 end
 
