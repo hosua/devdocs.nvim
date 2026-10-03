@@ -106,9 +106,9 @@ Inside the **viewer**:
 | `o` | open this page on devdocs.io |
 | `y` | yank the devdocs.io url |
 | `<CR>`, double-click | follow the link under the cursor (links between docs stay in the viewer) |
-| `<BS>`, `u` | back |
+| `<BS>`, `u` | back (through links, `e` and `p`, to where the cursor was) |
 | `e` | only the examples of this section (whole page's examples when it has none) |
-| `p` | the whole page |
+| `p` | the whole page, scrolled to the section you were reading (`<BS>` returns to the section) |
 | `s` | search inside this doc |
 | `?` | help |
 

@@ -33,6 +33,14 @@ smoke_keys ':DevDocs open lua~5.4 assert' Enter
 sleep 0.6
 smoke_expect 'assert'
 smoke_reject 'E[0-9]+:'
+smoke_keys 'p'                               # whole page, scrolled to assert
+sleep 0.4
+smoke_expect 'assert \(v'
+smoke_expect 'collectgarbage'                # the next section: this is the page
+smoke_reject 'Reference Manual'              # not page line 1
+smoke_reject 'E[0-9]+:'
+smoke_keys BSpace                            # back to the section
+smoke_reject 'collectgarbage'
 smoke_keys 'q'
 smoke_keys ':DevDocs definition' Enter        # cursor back in main.cpp on cout
 sleep 0.6
