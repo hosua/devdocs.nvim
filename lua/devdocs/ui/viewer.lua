@@ -28,8 +28,6 @@ local M = {}
 
 local hints = require "devdocs.ui.hints"
 M.FOOTER = {
-  { "o", "browser" },
-  { "y", "url" },
   { "⏎", "follow" },
   { "⌫", "back" },
   { "e", "examples" },
@@ -39,6 +37,9 @@ M.FOOTER = {
   { "s", "search" },
   { "?", "help" },
   { "q", "close" },
+  -- least used last: a narrow float drops trailing hints, and ? lists them
+  { "o", "browser" },
+  { "y", "url" },
 }
 
 M.HELP = {

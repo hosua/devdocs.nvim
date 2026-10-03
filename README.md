@@ -21,7 +21,7 @@ int main╭──────────────── C++ › Input/output
 ~       │to a stream buffer of implementation-defined type (derived from │
 ~       │std::streambuf), associated with the standard C output stream   │
 ~       │stdout.                                                         │
-~       ╰─ o browser  y url  ⏎ follow  ⌫ back  e examples  p page  s search  ? help  q close ─╯
+~       ╰─ ⏎ follow  ⌫ back  e examples  p page  n/N section  c/C chapter  s search  ? help  q close ─╯
 ```
 
 The data comes from the same files devdocs' own `thor docs:download` uses

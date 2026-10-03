@@ -184,7 +184,7 @@ describe("viewer p (whole page at the current section)", function()
     local text = type(footer) == "table" and table.concat(vim.tbl_map(function(c)
       return c[1]
     end, footer)) or footer
-    ok(text:find("o browser", 1, true), vim.inspect(footer))
+    ok(text:find("⏎ follow", 1, true), vim.inspect(footer))
   end)
 
   it("goes back to the section view from the page", function()
