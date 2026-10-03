@@ -7,22 +7,7 @@ cursor opens its page in a float, examples come up on their own, every
 installed doc is grepped with ripgrep, and a Mason-like manager installs,
 updates and removes docs.
 
-```
-#include <iostream>
-using namespace std;
-int main╭──────────────── C++ › Input/output › std::cout ────────────────╮
-~       │# std::cout, std::wcout                                         │
-~       │                                                                │
-~       │extern std::ostream cout;                                       │
-~       │                                                                │
-~       │extern std::wostream wcout;                                     │
-~       │                                                                │
-~       │The global objects std::cout and std::wcout control output      │
-~       │to a stream buffer of implementation-defined type (derived from │
-~       │std::streambuf), associated with the standard C output stream   │
-~       │stdout.                                                         │
-~       ╰─ o browser  y url  ⏎ follow  ⌫ back  e examples  p page  s search  ? help  q close ─╯
-```
+![The symbol under the cursor (std::cout) opened in the viewer float, with the key hints in its footer](docs/media/viewer-definition.png)
 
 The data comes from the same files devdocs' own `thor docs:download` uses
 (one tarball per doc from `downloads.devdocs.io`, the docs list from
@@ -113,14 +98,20 @@ Inside the **viewer**:
 | `s` | search inside this doc |
 | `?` | help |
 
+![The viewer after pressing e: only the examples of the std::cout section](docs/media/viewer-examples.png)
+
 Inside the **search picker** (telescope): `<C-t>` toggles grep / entry-name
 mode, `<CR>` opens in the viewer, `<C-x>` / `<C-v>` open in a split /
 vsplit, `<C-o>` opens the page in the browser, `<C-y>` yanks
 its url. Start the prompt with `@slug ` to search one doc.
 
+![:DevDocs search push_back grepping the C++ docs, with a preview of the matching page](docs/media/search-picker.png)
+
 Inside the **manager** each language is listed once, under *Installed* (any
 version installed) or *Available*; `▸` expands it into every version DevDocs
 has. The columns:
+
+![:DevDocs list with C++, CSS, JavaScript, Lua, Node.js and Python installed and Lua expanded into its versions](docs/media/list-manager.png)
 
 | column | |
 |---|---|
@@ -161,6 +152,8 @@ line switches to `S apply 3 marked (2 install, 1 uninstall)  m toggle  M clear  
 behind the plan's back) and say `N marked: S applies them (M clears)`;
 apply with `S` / `:w` or clear with `M` to get them back. `D`, `gD`, `U`
 and `A` still work (they ask first).
+
+![Marked mode: python~3.14 marked to install and python~3.13 to uninstall, with the apply menu showing disk used, freed and net](docs/media/list-apply.png)
 
 The date next to each doc is when that version was **released upstream**
 (e.g. `angular~22` → 2026-06-03, `python~3.12` → 2023-10-02), taken from the
@@ -442,6 +435,8 @@ installs run, `""` otherwise, for your statusline).
 `:checkhealth devdocs` reports the Neovim version, which copy of the plugin
 is loaded, the tools it found, the data directory and its size, installed
 docs, the docs list age, the release dates cache and the install source.
+
+![:checkhealth devdocs with every check passing](docs/media/checkhealth.png)
 
 - **"no docs installed for this buffer"**: `:DevDocs install` fetches the
   right ones; `:DevDocs list` shows what exists. Unknown filetypes need
