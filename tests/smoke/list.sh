@@ -11,9 +11,11 @@ smoke_start 120 40 env DEVDOCS_DATA="$DEVDOCS_DATA" XDG_DATA_HOME="$work/xdg" nv
 smoke_keys ':DevDocs list' Enter
 sleep 0.8
 smoke_expect 'DevDocs  [0-9]+ installed'
+smoke_expect 'Name +Version +Size +Released +Pages +Notes'   # column header
 smoke_expect 'Installed \([0-9]+\)'
-smoke_expect '✓ C\+\+'
-smoke_expect 'Available \([0-9]+\)'
+smoke_expect '✓ +C\+\+ '                 # one row per language
+smoke_expect '[0-9.]+ \(current\)'        # rolling slug shows its release
+smoke_expect '≈?[0-9]{4}-[0-9]{2}-[0-9]{2}'
 smoke_reject 'E[0-9]+:'
 smoke_keys '}'                      # next group
 smoke_keys 'G'                      # bottom of the list
@@ -24,10 +26,14 @@ sleep 0.4
 smoke_expect 'filter: pyth'
 smoke_expect 'Python'
 smoke_keys Enter
-smoke_keys 'j' 'j'
-smoke_keys Tab                      # expand versions
+smoke_expect '[▸▾] Python'               # one row per language, with a chevron
+smoke_reject '[├└] '                      # versions folded
+smoke_keys Tab                      # expand the first match (every match has versions)
 sleep 0.4
-smoke_expect '3\.1[0-4]'
+smoke_expect '[├└] [a-z_]+~?'
+smoke_keys 'j' 'h'                  # h on a version folds its language
+sleep 0.4
+smoke_reject '[├└] '
 smoke_keys '?'
 sleep 0.4
 smoke_expect 'DevDocs manager keys'

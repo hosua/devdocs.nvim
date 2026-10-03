@@ -21,6 +21,7 @@ M.HIGHLIGHTS = {
   DevDocsProgress = "DiagnosticInfo",
   DevDocsKey = "Special",
   DevDocsLink = "Underlined",
+  DevDocsMark = "DiagnosticHint",
 }
 
 function M.apply_highlights()

@@ -128,13 +128,19 @@ files' mtimes once per session). See :DevDocs detect and :DevDocs resync.
 ==============================================================================
 5. MANAGER KEYS                                               *devdocs-manager*
 
-  j k gg G <C-d> <C-u> PgUp PgDn   move        } {    next / previous group
+  j k gg G <C-d> <C-u> PgUp PgDn   move        } {    next / previous section
   <Tab> l h   expand versions      i   install     X   uninstall (asks)
   u U         update one / all     e   enable or disable
   <CR>        open in the viewer   o   open on devdocs.io
   /           live filter          s   sort by name / size
   r           refresh the list     A   install every doc (asks)
   ?           help                 q   close
+
+One row per language; ▸ expands it into its versions. On a language row, i
+/ e / <CR> / o act on its installed current version (else the newest), u on
+its outdated versions and X on every installed version. Columns: Version
+("(current)" is DevDocs' rolling latest), Size (a language sums its installed
+versions), Released (≈ is estimated from DevDocs' last update), Pages, Notes.
 
 ==============================================================================
 6. DATA ON DISK                                                  *devdocs-data*
@@ -162,7 +168,7 @@ than the plugin knows are never overwritten.
   DevDocsMatch Search              DevDocsInstalled DiagnosticOk
   DevDocsOutdated DiagnosticWarn   DevDocsError DiagnosticError
   DevDocsProgress DiagnosticInfo   DevDocsKey Special
-  DevDocsLink Underlined
+  DevDocsLink Underlined           DevDocsMark DiagnosticHint
 
 ==============================================================================
 8. HEALTH                                                      *devdocs-health*

@@ -123,18 +123,53 @@ local function do_install(row, force)
   refresh_data()
 end
 
+--- X: one version, or on a language row every installed version, after one
+--- confirm that lists the directories it deletes.
 local function do_uninstall(row)
-  if not row.meta then
-    notify(row.slug .. " is not installed")
+  local victims = row.kind == "lang"
+      and vim.tbl_filter(function(c)
+        return c.meta ~= nil
+      end, row.children)
+    or { row }
+  if #victims == 0 or not victims[1].meta then
+    notify((row.slug or row.base) .. " is not installed")
     return
   end
-  if not float.confirm(("Delete %s?"):format(paths.doc_dir(row.slug))) then
+  local dirs = vim.tbl_map(function(v)
+    return paths.doc_dir(v.slug)
+  end, victims)
+  if not float.confirm(("Delete %s?"):format(table.concat(dirs, "\n"))) then
     return
   end
-  local ok, err = installer.uninstall(row.slug)
-  if not ok then
-    notify(err, vim.log.levels.ERROR)
+  for _, v in ipairs(victims) do
+    local ok, err = installer.uninstall(v.slug)
+    if not ok then
+      notify(err, vim.log.levels.ERROR)
+    end
   end
+  refresh_data()
+end
+
+--- u: reinstall a version; on a language row, its outdated versions (or its
+--- target when none is outdated).
+local function do_update(row)
+  if row.kind ~= "lang" then
+    do_install(row, true)
+    return
+  end
+  local outdated = vim.tbl_filter(function(c)
+    return c.status == "outdated"
+  end, row.children)
+  if #outdated == 0 then
+    do_install(model.target(row), true)
+    return
+  end
+  local slugs = vim.tbl_map(function(c)
+    return c.slug
+  end, outdated)
+  installer.install_many(slugs, { force = true, docs = manifest.by_slug(ui.state.docs) }, function()
+    refresh_data()
+  end)
   refresh_data()
 end
 
@@ -263,6 +298,7 @@ function M.open()
     width = width,
     loading = false,
   }
+  -- fn gets the row under the cursor (a language or a version)
   local function with_row(fn)
     return function()
       local row = current_row()
@@ -270,6 +306,15 @@ function M.open()
         fn(row)
       end
     end
+  end
+  -- fn gets the version an action on the cursor row means (model.target)
+  local function with_target(fn)
+    return with_row(function(row)
+      local target = model.target(row)
+      if target then
+        fn(target)
+      end
+    end)
   end
   local keys = {
     q = M.close,
@@ -326,22 +371,20 @@ function M.open()
       dispatch { type = "toggle_expand" }
     end,
     l = function()
-      dispatch { type = "toggle_expand" }
+      dispatch { type = "expand" }
     end,
     h = function()
-      dispatch { type = "toggle_expand" }
+      dispatch { type = "collapse" }
     end,
-    i = with_row(function(row)
+    i = with_target(function(row)
       do_install(row, row.meta ~= nil)
     end),
     X = with_row(do_uninstall),
-    u = with_row(function(row)
-      do_install(row, true)
-    end),
+    u = with_row(do_update),
     U = do_update_all,
-    e = with_row(do_toggle_enabled),
-    ["<CR>"] = with_row(do_open),
-    o = with_row(do_browser),
+    e = with_target(do_toggle_enabled),
+    ["<CR>"] = with_target(do_open),
+    o = with_target(do_browser),
     ["/"] = do_filter,
     s = function()
       dispatch { type = "sort" }
@@ -366,7 +409,7 @@ function M.open()
       local id = row_at_mouse()
       if id then
         dispatch { type = "goto", row = id }
-        local row = current_row()
+        local row = model.target(current_row())
         if row then
           do_open(row)
         end

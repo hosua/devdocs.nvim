@@ -117,16 +117,26 @@ mode, `<CR>` opens in the viewer, `<C-x>` / `<C-v>` / `<C-t>ab` open in a
 split / vsplit / tab, `<C-o>` opens the page in the browser, `<C-y>` yanks
 its url. Start the prompt with `@slug ` to search one doc.
 
-Inside the **manager**:
+Inside the **manager** each language is listed once, under *Installed* (any
+version installed) or *Available*; `▸` expands it into every version DevDocs
+has. The columns:
+
+| column | |
+|---|---|
+| Version | the installed version (or `N installed`); `22.2.1 (current)` is DevDocs' rolling latest |
+| Size | download size; a language sums its installed versions |
+| Released | when that version of the docs was released; `≈` is an estimate from DevDocs' last update |
+| Pages | pages installed |
+| Notes | progress, failures, `update available` |
 
 | key | |
 |---|---|
 | `j`/`k`, `↑`/`↓`, `gg`/`G`, `<C-d>`/`<C-u>`, `PgUp`/`PgDn`, wheel | move |
-| `}` / `{` | next / previous group |
-| `<Tab>`, `l`, `h` | expand or collapse the versions of a doc |
-| `i` | install the doc under the cursor |
-| `X` | uninstall (asks) |
-| `u` / `U` | update it / every outdated doc |
+| `}` / `{` | next / previous section |
+| `<Tab>`, `l`, `h` | expand / collapse a language's versions (`h` on a version folds it) |
+| `i` | install the version under the cursor; on a language, its installed current version or the newest |
+| `X` | uninstall (asks); on a language, every installed version |
+| `u` / `U` | update it (a language: its outdated versions) / every outdated doc |
 | `e` | enable / disable it for lookups and search |
 | `<CR>`, double-click | open in the viewer |
 | `o` | open on devdocs.io |
@@ -367,6 +377,7 @@ All `default = true` links; override them in your colorscheme.
 | `DevDocsProgress` | `DiagnosticInfo` |
 | `DevDocsKey` | `Special` |
 | `DevDocsLink` | `Underlined` |
+| `DevDocsMark` | `DiagnosticHint` |
 
 ## Hooks and API
 

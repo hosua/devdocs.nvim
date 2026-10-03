@@ -6,7 +6,7 @@ local model = require "devdocs.ui.model"
 
 local M = {}
 
-M.HEADER_LINES = 3
+M.HEADER_LINES = 4
 
 local ICON = {
   installing = "↓",
@@ -67,10 +67,26 @@ function M.bar(p)
   return string.rep("█", n) .. string.rep("░", 10 - n)
 end
 
---- The note column: what is happening or what pressing i/u would do.
+--- Notes column: what is happening, or what a key would do.
 --- @param row DevDocsListRow
 --- @return string
 function M.note(row)
+  if row.kind == "lang" then
+    local children = row.children or {}
+    if row.status ~= "installed" and row.status ~= "available" then
+      for _, c in ipairs(children) do
+        if c.status == row.status then
+          return M.note(c)
+        end
+      end
+    end
+    -- collapsed: say there is more to see, unless every version is installed
+    -- (the Version column already says "N installed" then)
+    if not row.expanded and #children > 1 and (row.installed_count or 0) < #children then
+      return ("%d versions"):format(#children)
+    end
+    return ""
+  end
   if row.status == "installing" then
     local j = row.job
     local stage = j.stage == "queued" and "queued" or j.stage
@@ -84,26 +100,209 @@ function M.note(row)
     return "update available (u)"
   elseif row.status == "disabled" then
     return "disabled (e enables)"
-  elseif row.status == "installed" then
-    local m = row.meta or {}
-    local when = m.installed_at and os.date("%Y-%m-%d", m.installed_at) or ""
-    local pages = m.page_count and (m.page_count .. " pages") or ""
-    return vim.trim(pages .. "  " .. when)
-  elseif row.versions and row.versions > 1 then
-    return ("+%d versions (Tab)"):format(row.versions - 1)
   end
   return ""
 end
 
---- Column widths for a window width.
+--- "3.12" for a versioned slug; "22.2.1 (current)" for the unversioned one,
+--- which DevDocs keeps at the latest release.
+local function version_of(row)
+  local doc = row.doc or {}
+  if (doc.version or "") ~= "" then
+    return doc.version
+  end
+  local release = doc.release or ""
+  if release == "" then
+    release = row.meta and row.meta.release or ""
+  end
+  return release ~= "" and (release .. " (current)") or "current"
+end
+
+--- Version column. A language shows its installed version, "N installed"
+--- when there are several, or its newest version when none is.
+--- @param row DevDocsListRow
+--- @return string
+function M.version(row)
+  if row.kind ~= "lang" then
+    return version_of(row)
+  end
+  if row.installed_count and row.installed_count > 1 then
+    return ("%d installed"):format(row.installed_count)
+  end
+  for _, c in ipairs(row.children) do
+    if c.meta then
+      return version_of(c)
+    end
+  end
+  return version_of(row.children[1])
+end
+
+--- Released column: when this version of the docs was released. Exact
+--- dates come from state.release_dates; otherwise DevDocs' last update of the
+--- docs (manifest mtime) stands in, marked ≈. A language shows its target's.
+--- @param state DevDocsListState
+--- @param row DevDocsListRow
+--- @return string
+function M.released(state, row)
+  local r = model.target(row)
+  if not r then
+    return ""
+  end
+  local known = (state.release_dates or {})[r.slug]
+  if known and known.date then
+    return (known.exact and "" or "≈") .. known.date
+  end
+  local mtime = r.doc and r.doc.mtime or 0
+  if mtime > 0 then
+    return "≈" .. os.date("!%Y-%m-%d", mtime)
+  end
+  return ""
+end
+
+--- Mark column: ● marked; on a language ● when every installed version (or
+--- every version, if none is installed) is marked, ◐ when only some are.
+--- @param state DevDocsListState
+--- @param row DevDocsListRow
+--- @return string
+function M.mark(state, row)
+  local marked = state.marked or {}
+  if row.kind ~= "lang" then
+    return marked[row.slug] and "●" or ""
+  end
+  local pool = vim.tbl_filter(function(c)
+    return c.meta ~= nil
+  end, row.children)
+  if #pool == 0 then
+    pool = row.children
+  end
+  local n, any = 0, false
+  for _, c in ipairs(row.children) do
+    any = any or marked[c.slug] == true
+  end
+  for _, c in ipairs(pool) do
+    n = n + (marked[c.slug] and 1 or 0)
+  end
+  if n > 0 and n == #pool then
+    return "●"
+  end
+  return any and "◐" or ""
+end
+
+local function size_of(row)
+  if row.kind == "lang" then
+    return row.installed_count > 0 and row.installed_size or row.size_hint
+  end
+  return (row.meta and row.meta.db_size) or (row.doc and row.doc.db_size)
+end
+
+local function pages_of(row)
+  if row.kind ~= "lang" then
+    return row.meta and row.meta.page_count
+  end
+  local n = 0
+  for _, c in ipairs(row.children) do
+    n = n + (c.meta and c.meta.page_count or 0)
+  end
+  return n > 0 and n or nil
+end
+
+--- Name column: chevron + name for a language, tree glyph + slug for a version.
+local function name_of(row, last)
+  if row.kind == "lang" then
+    local chevron = "  "
+    if #row.children > 1 then
+      chevron = row.expanded and "▾ " or "▸ "
+    end
+    return chevron .. row.name
+  end
+  return (last and "  └ " or "  ├ ") .. row.slug
+end
+
+--- Column widths and display offsets for a window width. Every cell goes
+--- through M.cell, so the offsets hold whatever glyphs a row carries.
 --- @param width integer
---- @return { name: integer, version: integer, size: integer, note: integer }
+--- @return table { mark, icon, name, version, size, released, pages, note: integer, at: table<string, integer> }
 function M.columns(width)
-  local name = math.max(12, math.min(28, math.floor(width * 0.3)))
-  local version = 10
-  local size = 9
-  local note = math.max(8, width - 4 - name - 1 - version - 1 - size - 1)
-  return { name = name, version = version, size = size, note = note }
+  local c = { mark = 2, icon = 2, version = 16, size = 8, released = 11, pages = 5 }
+  c.name = math.max(14, math.min(28, math.floor(width * 0.25)))
+  local fixed = c.mark + c.icon + c.name + 1 + c.version + 1 + c.size + 1 + c.released + 1 + c.pages + 1
+  c.note = math.max(8, width - fixed)
+  c.at = { mark = 0, icon = c.mark, name = c.mark + c.icon }
+  c.at.version = c.at.name + c.name + 1
+  c.at.size = c.at.version + c.version + 1
+  c.at.released = c.at.size + c.size + 1
+  c.at.pages = c.at.released + c.released + 1
+  c.at.note = c.at.pages + c.pages + 1
+  return c
+end
+
+--- Cells of one line, in column order (separators included).
+local function cells(cols, mark, icon, name, version, size, released, pages, note)
+  return {
+    M.cell(mark, cols.mark),
+    M.cell(icon, cols.icon),
+    M.cell(name, cols.name),
+    " ",
+    M.cell(version, cols.version),
+    " ",
+    M.cell(size, cols.size),
+    " ",
+    M.cell(released, cols.released),
+    " ",
+    M.cell(pages, cols.pages),
+    " ",
+    M.cell(note, cols.note),
+  }
+end
+
+--- Byte offset where cell `i` starts.
+local function offset(parts, i)
+  local n = 0
+  for k = 1, i - 1 do
+    n = n + #parts[k]
+  end
+  return n
+end
+
+local NOTE_HL = { installing = "DevDocsProgress", error = "DevDocsError", outdated = "DevDocsOutdated" }
+
+local function render_row(state, rows, i, cols, line_no, spans)
+  local row = rows[i]
+  local next_row = rows[i + 1]
+  local last = row.kind == "doc" and not (next_row and next_row.kind == "doc" and next_row.base == row.base)
+  local released = M.released(state, row)
+  local pages = pages_of(row)
+  local mark, icon = M.mark(state, row), ICON[row.status] or "·"
+  local parts = cells(
+    cols,
+    mark,
+    icon,
+    name_of(row, last),
+    M.version(row),
+    M.size(size_of(row)),
+    released,
+    pages and tostring(pages) or "",
+    M.note(row)
+  )
+  local line = table.concat(parts)
+  if mark ~= "" then
+    spans[#spans + 1] = { row = line_no, col_start = 0, col_end = #mark, hl = "DevDocsMark" }
+  end
+  local icon_at = offset(parts, 2)
+  spans[#spans + 1] =
+    { row = line_no, col_start = icon_at, col_end = icon_at + #icon, hl = ICON_HL[row.status] or "DevDocsDim" }
+  if row.status == "disabled" or row.status == "available" then
+    spans[#spans + 1] = { row = line_no, col_start = offset(parts, 3), col_end = #line, hl = "DevDocsDim" }
+    return line
+  end
+  if vim.startswith(released, "≈") then
+    local at = offset(parts, 9)
+    spans[#spans + 1] = { row = line_no, col_start = at, col_end = at + #parts[9], hl = "DevDocsDim" }
+  end
+  if NOTE_HL[row.status] then
+    spans[#spans + 1] = { row = line_no, col_start = offset(parts, 13), col_end = #line, hl = NOTE_HL[row.status] }
+  end
+  return line
 end
 
 --- @param state DevDocsListState
@@ -137,15 +336,17 @@ function M.render(state)
     spans[#spans + 1] = { row = 1, col_start = #" DevDocs  ", col_end = #left, hl = "DevDocsError" }
   end
   lines[2] = M.cell(
-    " i install  X uninstall  u update  e enable  ⏎ open  Tab versions  / filter  s sort  r refresh  ? help  q",
+    " i install  X uninstall  u update  e enable  ⏎ open  Tab/l/h versions  / filter  s sort  r refresh  ? help  q",
     width
   )
   spans[#spans + 1] = { row = 2, col_start = 0, col_end = #lines[2], hl = "DevDocsDim" }
-  lines[3] = string.rep("─", width)
-  spans[#spans + 1] = { row = 3, col_start = 0, col_end = #lines[3], hl = "DevDocsDim" }
+  local cols = M.columns(width)
+  lines[3] = table.concat(cells(cols, "", "", "Name", "Version", "Size", "Released", "Pages", "Notes"))
+  spans[#spans + 1] = { row = 3, col_start = 0, col_end = #lines[3], hl = "DevDocsHeader" }
+  lines[4] = string.rep("─", width)
+  spans[#spans + 1] = { row = 4, col_start = 0, col_end = #lines[4], hl = "DevDocsDim" }
 
   local rows = model.rows(state)
-  local cols = M.columns(width)
   local last = math.min(#rows, state.top + math.max(1, state.height) - 1)
   if #rows == 0 then
     local msg = state.loading and ""
@@ -164,40 +365,9 @@ function M.render(state)
       lines[line_no] = M.cell(text, width)
       spans[#spans + 1] = { row = line_no, col_start = 0, col_end = #text, hl = "DevDocsHeader" }
     else
-      local icon = ICON[row.status] or "·"
-      local doc = row.doc or {}
-      local name = doc.name or row.slug
-      local version = doc.version or ""
-      if version == "" then
-        version = "current"
-      end
-      local parts = {
-        "  " .. icon .. " ",
-        M.cell(name, cols.name),
-        " ",
-        M.cell(version, cols.version),
-        " ",
-        M.cell(M.size(doc.db_size), cols.size),
-        " ",
-        M.cell(M.note(row), cols.note),
-      }
-      local line = table.concat(parts)
+      local line = render_row(state, rows, i, cols, line_no, spans)
       lines[line_no] = line
-      spans[#spans + 1] =
-        { row = line_no, col_start = 2, col_end = 2 + #icon, hl = ICON_HL[row.status] or "DevDocsDim" }
-      if row.status == "disabled" or row.status == "available" then
-        spans[#spans + 1] = { row = line_no, col_start = 2 + #icon + 1, col_end = #line, hl = "DevDocsDim" }
-      elseif row.status == "installing" then
-        local note_start = #line - #parts[8]
-        spans[#spans + 1] = { row = line_no, col_start = note_start, col_end = #line, hl = "DevDocsProgress" }
-      elseif row.status == "error" then
-        local note_start = #line - #parts[8]
-        spans[#spans + 1] = { row = line_no, col_start = note_start, col_end = #line, hl = "DevDocsError" }
-      elseif row.status == "outdated" then
-        local note_start = #line - #parts[8]
-        spans[#spans + 1] = { row = line_no, col_start = note_start, col_end = #line, hl = "DevDocsOutdated" }
-      end
-      regions[#regions + 1] = { row = line_no, col_start = 0, col_end = #line, kind = "doc", id = i }
+      regions[#regions + 1] = { row = line_no, col_start = 0, col_end = #line, kind = row.kind, id = i }
     end
   end
   return { lines = lines, spans = spans, regions = regions, rows = rows }
@@ -214,17 +384,28 @@ M.HELP = {
   "DevDocs manager keys",
   "",
   "  j/k, ↑/↓, gg/G, <C-d>/<C-u>, PgUp/PgDn   move",
-  "  }/{          next / previous group",
-  "  <Tab>        expand or collapse the versions of a doc",
-  "  i            install the doc under the cursor (or the version shown)",
-  "  X            uninstall it (asks first)",
-  "  u            update it;  U updates every outdated doc",
+  "  }/{          next / previous section",
+  "  <Tab>        expand (▸) or collapse (▾) a language's versions",
+  "  l / h        expand / collapse; h on a version folds its language",
+  "  i            install the version under the cursor; on a language,",
+  "               its installed current version or else the newest",
+  "  X            uninstall it (asks first); on a language, every version",
+  "  u            update it (a language: its outdated versions);",
+  "               U updates every outdated doc",
   "  e            enable / disable it for lookups and search",
   "  <CR>         open the doc in the viewer;  o opens it on devdocs.io",
   "  /            filter (type, <Esc> clears, <CR> keeps);  s toggles name/size sort",
   "  r            refresh the docs list from devdocs.io",
   "  A            install every doc (asks first)",
   "  ?            this help;  q closes",
+  "",
+  "Columns",
+  "  Version      (current) is DevDocs' rolling latest; a language shows",
+  "               its installed version, or how many are installed",
+  "  Size         download size; a language sums its installed versions",
+  "  Released     when that version of the docs was released;",
+  "               ≈ is an estimate from DevDocs' last update of it",
+  "  Pages        pages installed",
 }
 
 return M

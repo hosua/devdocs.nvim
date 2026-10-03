@@ -14,6 +14,8 @@ local M = {}
 --- @field filter string
 --- @field sort "name"|"size"
 --- @field expanded table<string, boolean>  base -> true
+--- @field marked table<string, boolean>    slug -> true (selection)
+--- @field release_dates table<string, { date: string, exact: boolean }>  slug -> release date
 --- @field cursor integer   1-based index into rows()
 --- @field top integer      first visible row
 --- @field height integer   visible rows
@@ -23,17 +25,23 @@ local M = {}
 --- @field fetched_at integer|nil
 
 --- @class DevDocsListRow
---- @field kind "group"|"doc"
---- @field label string|nil       group rows
---- @field count integer|nil      group rows
---- @field slug string|nil        doc rows
---- @field base string|nil
---- @field doc DevDocsDoc|nil
---- @field meta table|nil
---- @field job DevDocsJob|nil
+--- @field kind "group"|"lang"|"doc"
+--- @field label string|nil       group: "Installed" / "Available"
+--- @field count integer|nil      group: languages in the section
+--- @field base string|nil        lang/doc: "python"
+--- @field name string|nil        lang: display name ("Python")
+--- @field children DevDocsListRow[]|nil  lang: every version, newest first
+--- @field expanded boolean|nil   lang: versions shown below it (false when there is only one)
+--- @field installed_count integer|nil  lang
+--- @field installed_size integer|nil   lang: sum of the installed versions' db_size
+--- @field size_hint integer|nil  lang: db_size of the newest version
+--- @field slug string|nil        doc
+--- @field doc DevDocsDoc|nil     doc
+--- @field meta table|nil         doc: installed meta.json
+--- @field job DevDocsJob|nil     doc
+--- @field depth integer|nil      doc: 1 (a version under its language)
+--- @field current boolean|nil    doc: the unversioned slug, DevDocs' rolling "current"
 --- @field status "installing"|"error"|"installed"|"outdated"|"available"|"disabled"|nil
---- @field versions integer|nil   collapsed base rows: how many versions are hidden
---- @field expanded boolean|nil
 
 --- @param opts table|nil
 --- @return DevDocsListState
@@ -46,6 +54,8 @@ function M.new(opts)
     filter = "",
     sort = "name",
     expanded = {},
+    marked = {},
+    release_dates = {},
     cursor = 1,
     top = 1,
     height = 20,
@@ -98,147 +108,223 @@ function M.status(state, slug, doc)
   return "available"
 end
 
+--- What a language weighs for the size sort: what it takes on disk once
+--- anything is installed, else what installing the newest version would take.
+local function lang_size(lang)
+  if lang.installed_count > 0 then
+    return lang.installed_size
+  end
+  return lang.size_hint
+end
+
 local function sorter(state)
   if state.sort == "size" then
     return function(a, b)
-      local sa, sb = (a.doc and a.doc.db_size) or 0, (b.doc and b.doc.db_size) or 0
+      local sa, sb = lang_size(a.lang), lang_size(b.lang)
       if sa ~= sb then
         return sa > sb
       end
-      return a.slug < b.slug
+      return a.lang.base < b.lang.base
     end
   end
   return function(a, b)
-    local na, nb = (a.doc and a.doc.name or a.slug):lower(), (b.doc and b.doc.name or b.slug):lower()
+    local na, nb = a.lang.name:lower(), b.lang.name:lower()
     if na ~= nb then
       return na < nb
     end
-    return manifest.compare_versions((a.doc and a.doc.version) or "", (b.doc and b.doc.version) or "") > 0
+    return a.lang.base < b.lang.base
   end
 end
 
---- The rows to display for a state: group headers and doc rows.
+--- A manifest-shaped doc for a slug the manifest does not list (installed
+--- from an older manifest, or a job for a slug it dropped).
+local function synthetic_doc(slug, meta)
+  return {
+    slug = slug,
+    name = meta.name or slug,
+    version = meta.doc_version or (slug:match "~(.+)$" or ""),
+    release = meta.release or "",
+    db_size = meta.db_size or 0,
+    mtime = meta.mtime or 0,
+  }
+end
+
+local AGGREGATE_RANK = { installing = 1, error = 2, outdated = 3, installed = 4 }
+
+--- installing > error > outdated > installed > disabled (every install off) > available
+--- @param children DevDocsListRow[]
+--- @return string
+local function aggregate(children)
+  local best, disabled
+  for _, c in ipairs(children) do
+    local rank = AGGREGATE_RANK[c.status]
+    if rank and (not best or rank < AGGREGATE_RANK[best]) then
+      best = c.status
+    end
+    disabled = disabled or c.status == "disabled"
+  end
+  return best or (disabled and "disabled") or "available"
+end
+
+local function newest_first(a, b)
+  local c = manifest.compare_versions(a.doc.version or "", b.doc.version or "")
+  if c ~= 0 then
+    return c > 0
+  end
+  return a.slug < b.slug
+end
+
+--- Every language, unfiltered and unsorted, as lang rows (expanded = false).
+--- Versions come from the manifest plus installed docs and jobs it lacks.
+--- @param state DevDocsListState
+--- @return DevDocsListRow[]
+local function languages(state)
+  local by_base, order, seen = {}, {}, {}
+  local function add(slug, doc)
+    local b = manifest.base(slug)
+    if not by_base[b] then
+      by_base[b] = {}
+      order[#order + 1] = b
+    end
+    table.insert(by_base[b], {
+      kind = "doc",
+      slug = slug,
+      base = b,
+      doc = doc,
+      meta = state.installed[slug],
+      job = state.jobs[slug],
+      status = M.status(state, slug, doc),
+      depth = 1,
+      current = slug == b,
+    })
+  end
+  for _, doc in ipairs(state.docs) do
+    if not seen[doc.slug] then
+      seen[doc.slug] = true
+      add(doc.slug, doc)
+    end
+  end
+  local extra = {}
+  for slug in pairs(state.installed) do
+    extra[slug] = not seen[slug] or nil
+  end
+  for slug in pairs(state.jobs) do
+    extra[slug] = not seen[slug] or nil
+  end
+  local extra_slugs = vim.tbl_keys(extra)
+  table.sort(extra_slugs)
+  for _, slug in ipairs(extra_slugs) do
+    add(slug, synthetic_doc(slug, state.installed[slug] or {}))
+  end
+
+  local out = {}
+  for _, b in ipairs(order) do
+    local children = by_base[b]
+    table.sort(children, newest_first)
+    local count, size = 0, 0
+    for _, c in ipairs(children) do
+      if c.meta then
+        count = count + 1
+        size = size + (c.meta.db_size or c.doc.db_size or 0)
+      end
+    end
+    out[#out + 1] = {
+      kind = "lang",
+      base = b,
+      name = children[1].doc.name or b,
+      children = children,
+      expanded = false,
+      status = aggregate(children),
+      installed_count = count,
+      installed_size = size,
+      size_hint = children[1].doc.db_size or 0,
+    }
+  end
+  return out
+end
+
+--- The rows to display: section headers, one row per language and, under
+--- an expanded language, one row per version.
 --- @param state DevDocsListState
 --- @return DevDocsListRow[]
 function M.rows(state)
-  local by_slug = manifest.by_slug(state.docs)
-  local seen = {}
-  local groups = { installing = {}, installed = {}, outdated = {}, available = {} }
-
-  local function doc_row(slug, doc)
-    local meta = state.installed[slug]
-    return {
-      kind = "doc",
-      slug = slug,
-      base = manifest.base(slug),
-      doc = doc
-        or (
-          meta
-          and { slug = slug, name = meta.name or slug, version = meta.doc_version or "", db_size = meta.db_size or 0 }
-        ),
-      meta = meta,
-      job = state.jobs[slug],
-      status = M.status(state, slug, doc),
-    }
-  end
-
-  -- installed (and running/failed jobs) are listed per slug
-  local per_slug = {}
-  for slug in pairs(state.installed) do
-    per_slug[slug] = true
-  end
-  for slug in pairs(state.jobs) do
-    per_slug[slug] = true
-  end
-  for slug in pairs(per_slug) do
-    local doc = by_slug[slug]
-    if matches(state.filter, doc or { slug = slug, name = (state.installed[slug] or {}).name or slug }) then
-      local row = doc_row(slug, doc)
-      seen[slug] = true
-      if row.status == "installing" or row.status == "error" then
-        groups.installing[#groups.installing + 1] = row
-      elseif row.status == "outdated" then
-        groups.outdated[#groups.outdated + 1] = row
-      else
-        groups.installed[#groups.installed + 1] = row
-      end
-    end
-  end
-
-  -- available: one row per base (newest not-installed version), expandable
-  local bases = {}
-  local order = {}
-  for _, doc in ipairs(state.docs) do
-    if not seen[doc.slug] and matches(state.filter, doc) then
-      local base = manifest.base(doc.slug)
-      if not bases[base] then
-        bases[base] = {}
-        order[#order + 1] = base
-      end
-      table.insert(bases[base], doc)
-    end
-  end
-  for _, base in ipairs(order) do
-    local versions = manifest.sort_newest(bases[base])
-    if state.expanded[base] or state.filter:find("~", 1, true) then
-      for _, doc in ipairs(versions) do
-        local row = doc_row(doc.slug, doc)
-        row.expanded = true
-        groups.available[#groups.available + 1] = row
-      end
-    else
-      local row = doc_row(versions[1].slug, versions[1])
-      row.versions = #versions
-      groups.available[#groups.available + 1] = row
+  local tilde = state.filter:find("~", 1, true) ~= nil
+  local sections = { installed = {}, available = {} }
+  for _, lang in ipairs(languages(state)) do
+    local visible = vim.tbl_filter(function(c)
+      return matches(state.filter, c.doc)
+    end, lang.children)
+    if #visible > 0 then
+      lang.expanded = #lang.children > 1 and (state.expanded[lang.base] == true or tilde)
+      local section = lang.status == "available" and sections.available or sections.installed
+      section[#section + 1] = { lang = lang, visible = visible }
     end
   end
 
   local out = {}
-  local function add_group(label, rows)
-    if #rows == 0 then
+  local function add_section(label, entries)
+    if #entries == 0 then
       return
     end
-    table.sort(rows, sorter(state))
-    out[#out + 1] = { kind = "group", label = label, count = #rows }
-    for _, r in ipairs(rows) do
-      out[#out + 1] = r
+    table.sort(entries, sorter(state))
+    out[#out + 1] = { kind = "group", label = label, count = #entries }
+    for _, e in ipairs(entries) do
+      out[#out + 1] = e.lang
+      if e.lang.expanded then
+        vim.list_extend(out, e.visible)
+      end
     end
   end
-  add_group("Installing", groups.installing)
-  add_group("Outdated", groups.outdated)
-  add_group("Installed", groups.installed)
-  add_group("Available", groups.available)
+  add_section("Installed", sections.installed)
+  add_section("Available", sections.available)
   return out
 end
 
---- Counts for the header line.
+--- The version row an action on `row` should use: a version row itself; for
+--- a language, its installed current version (else the newest installed
+--- one), else a version with a running or failed job, else the newest.
+--- @param row DevDocsListRow|nil
+--- @return DevDocsListRow|nil
+function M.target(row)
+  if not row or row.kind == "group" then
+    return nil
+  elseif row.kind == "doc" then
+    return row
+  end
+  local installed, busy
+  for _, c in ipairs(row.children) do
+    if c.meta then
+      if c.current then
+        return c
+      end
+      installed = installed or c
+    elseif c.status == "installing" or c.status == "error" then
+      busy = busy or c
+    end
+  end
+  return installed or busy or row.children[1]
+end
+
+--- Counts for the header: languages with / without an installed version,
+--- plus versions installing and outdated.
 --- @param state DevDocsListState
 --- @return { installed: integer, installing: integer, outdated: integer, available: integer }
 function M.counts(state)
   local c = { installed = 0, installing = 0, outdated = 0, available = 0 }
-  local by_slug = manifest.by_slug(state.docs)
-  for slug in pairs(state.installed) do
-    local s = M.status(state, slug, by_slug[slug])
-    if s == "installing" then
-      c.installing = c.installing + 1
-    elseif s == "outdated" then
-      c.outdated = c.outdated + 1
-    else
+  for _, lang in ipairs(languages(state)) do
+    if lang.installed_count > 0 then
       c.installed = c.installed + 1
+    else
+      c.available = c.available + 1
+    end
+    for _, v in ipairs(lang.children) do
+      if v.status == "installing" then
+        c.installing = c.installing + 1
+      elseif v.status == "outdated" then
+        c.outdated = c.outdated + 1
+      end
     end
   end
-  for slug, job in pairs(state.jobs) do
-    if not state.installed[slug] and job_active(job) then
-      c.installing = c.installing + 1
-    end
-  end
-  local bases = {}
-  for _, d in ipairs(state.docs) do
-    if not state.installed[d.slug] then
-      bases[manifest.base(d.slug)] = true
-    end
-  end
-  c.available = vim.tbl_count(bases)
   return c
 end
 
@@ -290,6 +376,40 @@ local function move(state, rows, delta)
   return clamp(s, rows)
 end
 
+local function lang_index(rows, base)
+  for i, r in ipairs(rows) do
+    if r.kind == "lang" and r.base == base then
+      return i
+    end
+  end
+end
+
+--- Expand / collapse / toggle the language under the cursor. On a version
+--- row, toggle and collapse fold its language and move the cursor onto it.
+local function set_expanded(state, rows, how)
+  local row = rows[state.cursor]
+  if not row or row.kind == "group" or (row.kind == "doc" and how == "expand") then
+    return state
+  end
+  local lang = row.kind == "lang" and row or rows[lang_index(rows, row.base) or 0]
+  if not lang or #lang.children < 2 then
+    return state
+  end
+  local open = lang.expanded -- also true while a "~" filter forces it
+  local want = false
+  if row.kind == "lang" then
+    want = how == "expand" or (how == "toggle_expand" and not open)
+    if want == open then
+      return state
+    end
+  end
+  local s = vim.deepcopy(state)
+  s.expanded[lang.base] = want or nil
+  local new_rows = M.rows(s)
+  s.cursor = lang_index(new_rows, lang.base) or s.cursor
+  return clamp(s, new_rows)
+end
+
 --- @param state DevDocsListState
 --- @param action table { type = ..., ... }
 --- @return DevDocsListState
@@ -310,22 +430,8 @@ function M.reduce(state, action)
     return clamp(vim.tbl_extend("force", vim.deepcopy(state), { cursor = #rows }), rows)
   elseif t == "goto" then
     return clamp(vim.tbl_extend("force", vim.deepcopy(state), { cursor = action.row }), rows)
-  elseif t == "toggle_expand" then
-    local row = rows[state.cursor]
-    if not row or row.kind ~= "doc" or row.status ~= "available" then
-      return state
-    end
-    local s = vim.deepcopy(state)
-    s.expanded[row.base] = not s.expanded[row.base] or nil
-    -- keep the cursor on the same base after the rows shift
-    local new_rows = M.rows(s)
-    for i, r in ipairs(new_rows) do
-      if r.kind == "doc" and r.base == row.base and r.status == "available" then
-        s.cursor = i
-        break
-      end
-    end
-    return clamp(s, new_rows)
+  elseif t == "toggle_expand" or t == "expand" or t == "collapse" then
+    return set_expanded(state, rows, t)
   elseif t == "filter" then
     local s = vim.tbl_extend("force", vim.deepcopy(state), { filter = action.text or "", cursor = 1, top = 1 })
     return clamp(s, M.rows(s))
@@ -355,12 +461,13 @@ function M.reduce(state, action)
   return state
 end
 
---- The doc row under the cursor, or nil on a header / empty list.
+--- The language or version row under the cursor, or nil on a header /
+--- empty list. model.target() turns it into the version to act on.
 --- @param state DevDocsListState
 --- @return DevDocsListRow|nil
 function M.current(state)
   local row = M.rows(state)[state.cursor]
-  if row and row.kind == "doc" then
+  if row and row.kind ~= "group" then
     return row
   end
   return nil
