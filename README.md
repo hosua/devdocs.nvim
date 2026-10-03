@@ -41,7 +41,10 @@ mirror built by `:DevDocs mirror`.
     "nvim-telescope/telescope.nvim", -- optional: search and candidate pickers
     "nvim-lua/plenary.nvim", -- telescope's own dependency
   },
-  cmd = { "DevDocs", "DevDocsInstall", "DevDocsShowDefinition", "DevDocsShowExample", "DevDocsSearch", "DevDocsList" },
+  cmd = {
+    "DevDocs", "DevDocsShowDefinition", "DevDocsShowExample", "DevDocsOpen", "DevDocsSearch", "DevDocsList",
+    "DevDocsInstall", "DevDocsInstallAll", "DevDocsUninstall", "DevDocsUpdate", "DevDocsPrune", "DevDocsForceCloneAndScrape",
+  },
   event = "VeryLazy", -- so install_as_needed and the import sync run without a keypress
   opts = {},
 }
@@ -212,7 +215,7 @@ expands a type (`▸` → `▾`) and opens an entry, `h` folds, `<Tab>` toggles,
 entries by name (`<Esc>` clears the filter, `<CR>` keeps it). `d` switches to
 another installed doc's index, `s` searches inside this doc, `o`/`y` open or
 yank the devdocs.io url of the entry under the cursor. An entry opens in the
-viewer; `<BS>` returns to the index as you left it. Docs with a single type
+viewer; `<BS>` (or `u`) returns to the index as you left it. Docs with a single type
 list their entries directly. Keys: `?`.
 
 ![Looking up assert in the Lua manual: it opens paginated with the page index (180/256) in the title and p pages in the footer, n turns the page twice, c jumps to the next chapter, p shows the whole page (p paginated), p goes back to the paginated view](docs/media/viewer-paging.gif)
@@ -268,7 +271,7 @@ has. The columns:
 | `q`, `<Esc>` | close |
 
 **Marked mode.** While any mark is pending, the hint line under the status
-line switches to `S apply 3 marked (2 install, 1 uninstall)  m toggle  M clear  ⏎ open  / filter  ? help  q close`, so the bulk apply is always on screen.
+line switches to `S apply 3 marked (2 install, 1 uninstall)  m toggle  M clear  ⏎ index  o browser  / filter  ? help  q close`, so the bulk apply is always on screen.
 `i`, `X`, `V`…`X`/`d` and `u` do nothing then (they would act on one row
 behind the plan's back) and say `N marked: S applies them (M clears)`;
 apply with `S` / `:w` or clear with `M` to get them back. `D`, `gD`, `U`

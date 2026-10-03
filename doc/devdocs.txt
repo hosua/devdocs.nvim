@@ -232,7 +232,7 @@ cursor on its entry, marked with a dot; I again (or <BS>) returns.
   ?           help
   q <Esc>     close
 
-An entry opens in the viewer and <BS> returns to the index as you left it
+An entry opens in the viewer and <BS> (or u) returns to the index as you left it
 (expansion, filter, cursor). A doc with a single type lists its entries
 directly.
 
