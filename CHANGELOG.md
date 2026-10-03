@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/hosua/devdocs.nvim/compare/v0.3.0...v0.4.0) (2026-10-03)
+
+
+### Features
+
+* add a doc index view opened by :DevDocs open and I, like devdocs.io's sidebar ([#18](https://github.com/hosua/devdocs.nvim/issues/18)) ([f8c3cc1](https://github.com/hosua/devdocs.nvim/commit/f8c3cc180b72cf1eab8208021264d4e468a66f8f))
+
 ## [0.3.0](https://github.com/hosua/devdocs.nvim/compare/v0.2.0...v0.3.0) (2026-10-03)
 
 
