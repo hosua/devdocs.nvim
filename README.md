@@ -308,6 +308,8 @@ classified.
 | a function, type, macro or variable declared in this file (`helper` in `local function helper()`) | the doc page when the docs have an exact entry, else hover, else the popup (`helper is a function (declared on line 3): no documentation.`) |
 | anything else: a library name, a project function or type, a variable in a chain (`string.format`, `helper()`, `t.field`, `vim.api.nvim_create_user_command`), or a name nothing could place | the doc page when the docs have an entry named exactly that (`string.format()`, `print()`), else hover (the matches the docs did find, or `lookup.fallback`, when the hover is empty) |
 
+![Looking up print opens its page in the viewer; on a local variable, a string literal and a comment, :DevDocs definition shows a small popup saying there is nothing to document](docs/media/explain-popup.gif)
+
 What counts as a string, comment or number comes from the first source that
 has an answer: the bundled lua and c parsers or any nvim-treesitter parser
 (code injected into a string, as in `vim.cmd("set number")`, is not treated as
@@ -317,6 +319,8 @@ undeclared or unknown identifiers behave as before, and explicit text or a
 visual selection always looks up the docs. `lookup.explain = false` restores
 the old behaviour: nothing is treated as trivial, and classifying needs a
 client that can hover. The setting only matters while `lookup.smart = true`.
+
+![The popup on a string literal: "Hello, DevDocs" is a string literal: nothing to document.](docs/media/explain-popup.png)
 
 "Exactly that" means the qualified name, or the word itself when it is not
 qualified: `vim.print` does not open lua's `print()`, and `vim.fn.insert`

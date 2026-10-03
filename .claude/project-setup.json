@@ -74,7 +74,9 @@
         "docs/media/list-apply.png",
         "docs/media/checkhealth.png",
         "docs/tapes/capture.sh",
-        "docs/tapes/minimal_init.lua"
+        "docs/tapes/minimal_init.lua",
+        "docs/media/explain-popup.gif",
+        "docs/media/explain-popup.png"
       ]
     },
     "readme": {
