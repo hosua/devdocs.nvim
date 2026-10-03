@@ -15,6 +15,12 @@ describe("config", function()
     eq({ "notfy" }, unknown)
   end)
 
+  it("validates list.release_dates as a boolean", function()
+    eq(false, config.resolve({ list = { release_dates = false } }).list.release_dates)
+    ok(not pcall(config.resolve, { list = { release_dates = "yes" } }))
+    config.resolve()
+  end)
+
   it("does not mutate the defaults table", function()
     local before = vim.deepcopy(config.defaults)
     config.resolve { notify = false }

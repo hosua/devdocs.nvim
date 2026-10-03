@@ -137,6 +137,17 @@ Inside the **manager**:
 | `?` | help |
 | `q`, `<Esc>` | close |
 
+The date next to each doc is when that version was **released upstream**
+(e.g. `angular~22` → 2026-06-03, `python~3.12` → 2023-10-02), taken from the
+[endoflife.date API](https://endoflife.date/docs/api/v1/) (`/api/v1/products/<product>`: each
+release cycle's `releaseDate`). Answers are cached per product in
+`data_dir/releases/` for 7 days; the list shows the cache at once and fills in
+the rest in the background. A date marked `≈` is the DevDocs build date
+(`mtime` in docs.json): no upstream release date is known for that doc (CSS,
+HTML, C, ... have no versions upstream), or it could not be fetched (offline:
+the stale cache is used, nothing is reported). Set
+`list = { release_dates = false }` to make no requests and show build dates only.
+
 ## How a lookup picks its docs
 
 A lookup searches only the docs of the buffer's language, in the version its
@@ -251,6 +262,12 @@ back searching every installed doc after the buffer's own.
     scope = "buffer",
   },
 
+  list = {
+    -- Show when each doc's version was released upstream, from endoflife.date
+    -- (cached for a week). false: no network calls; the list shows DevDocs build dates (≈).
+    release_dates = true,
+  },
+
   -- filetype -> { slug bases }, merged over the built-in table (lua/devdocs/langmap.lua).
   extra_filetypes = {},
   -- Mason package name -> { slug bases }, merged over the built-in table.
@@ -340,6 +357,7 @@ docs/<slug>/meta.json         { version = 1, slug, name, doc_version, release, m
 docs/<slug>/entries.tsv       name <TAB> path <TAB> type, one entry per line
 docs/<slug>/anchors.json      { version = 1, pages = { [page] = { [fragment id] = line } } }
 docs/<slug>/pages/<path>.md   one markdown file per page (path characters outside [A-Za-z0-9._-] percent-encoded)
+releases/<product>.json       endoflife.date release cycles  { version, fetched_at, product, cycles }  (cache, safe to delete)
 tmp/                          staging for installs in progress
 mirror/                       :DevDocs mirror clone
 ```
@@ -381,7 +399,7 @@ installs run, `""` otherwise, for your statusline).
 
 `:checkhealth devdocs` reports the Neovim version, which copy of the plugin
 is loaded, the tools it found, the data directory and its size, installed
-docs, the docs list age and the install source.
+docs, the docs list age, the release dates cache and the install source.
 
 - **"no docs installed for this buffer"**: `:DevDocs install` fetches the
   right ones; `:DevDocs list` shows what exists. Unknown filetypes need

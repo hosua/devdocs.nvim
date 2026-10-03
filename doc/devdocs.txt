@@ -109,6 +109,14 @@ installed versions, from an attached language server, the shebang, project
 files (nearest package, then the git root), then the installed tool. Results
 are cached per buffer and per project (projects.json, re-checked against the
 files' mtimes once per session). See :DevDocs detect and :DevDocs resync.
+                                                            *devdocs-list*
+  list.release_dates  true: the manager dates each doc by when its version
+                      was released upstream, from endoflife.date
+                      (https://endoflife.date/api/v1/products/<product>,
+                      cached 7 days in data_dir/releases/). false: no
+                      network calls; every date is the DevDocs build date.
+                      A date marked "≈" is the DevDocs build date (docs.json
+                      mtime): no upstream release date is known for it.
                                                  *devdocs-extra_filetypes*
   extra_filetypes     filetype -> { doc bases }
   extra_mason         Mason package -> { doc bases }
@@ -136,6 +144,9 @@ files' mtimes once per session). See :DevDocs detect and :DevDocs resync.
   r           refresh the list     A   install every doc (asks)
   ?           help                 q   close
 
+Dates are upstream release dates (see |devdocs-list|); "≈" marks a DevDocs
+build date used when no release date is known.
+
 ==============================================================================
 6. DATA ON DISK                                                  *devdocs-data*
 
@@ -147,6 +158,8 @@ files' mtimes once per session). See :DevDocs detect and :DevDocs resync.
   data_dir/docs/<slug>/entries.tsv
   data_dir/docs/<slug>/anchors.json
   data_dir/docs/<slug>/pages/<path>.md
+  data_dir/releases/<product>.json  endoflife.date release cycles (cache,
+                                  safe to delete)
   data_dir/tmp/                   staging
   data_dir/mirror/                :DevDocs mirror clone
 
@@ -168,7 +181,7 @@ than the plugin knows are never overwritten.
 8. HEALTH                                                      *devdocs-health*
 
 :checkhealth devdocs reports the Neovim version, which copy of the plugin is
-loaded, tools, the data directory, installed docs, the docs list age and the
-install source.
+loaded, tools, the data directory, installed docs, the docs list age, the
+release dates cache and the install source.
 
 vim:tw=78:ts=8:ft=help:norl:

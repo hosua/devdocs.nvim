@@ -8,6 +8,7 @@ local installer = require "devdocs.installer"
 local manifest = require "devdocs.manifest"
 local model = require "devdocs.ui.model"
 local paths = require "devdocs.paths"
+local releases = require "devdocs.releases"
 local render = require "devdocs.ui.render"
 local store = require "devdocs.store"
 
@@ -89,6 +90,31 @@ local function visible_rows()
   return math.max(3, l.height - render.HEADER_LINES), l.width
 end
 
+--- Upstream release dates (endoflife.date) for every listed and installed doc,
+--- into state.release_dates: once from cache, again when fresh data arrives.
+--- An installed doc is dated by its installed release, not the manifest's.
+local function load_release_dates()
+  if not ui then
+    return
+  end
+  local installed = ui.state.installed or {}
+  local docs, seen = {}, {}
+  for _, d in ipairs(ui.state.docs or {}) do
+    seen[d.slug] = true
+    docs[#docs + 1] = type(installed[d.slug]) == "table" and vim.tbl_extend("force", d, installed[d.slug]) or d
+  end
+  for slug, meta in pairs(installed) do
+    if not seen[slug] and type(meta) == "table" then
+      docs[#docs + 1] = vim.tbl_extend("force", meta, { slug = slug })
+    end
+  end
+  releases.dates_for(docs, function(map)
+    if ui then
+      dispatch { type = "data", data = { release_dates = map } }
+    end
+  end)
+end
+
 local function load_manifest(force)
   dispatch { type = "data", data = { loading = true, error = nil } }
   manifest.get(function(docs, err)
@@ -100,6 +126,7 @@ local function load_manifest(force)
       type = "data",
       data = { docs = docs or {}, loading = false, error = err, fetched_at = at },
     }
+    load_release_dates()
   end, { force = force })
 end
 
@@ -410,6 +437,7 @@ function M.open()
     end,
   })
   draw()
+  load_release_dates()
   if #state.docs == 0 or not manifest.is_fresh() then
     load_manifest(false)
   end
