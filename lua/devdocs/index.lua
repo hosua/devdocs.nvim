@@ -9,12 +9,17 @@ local M = {}
 
 --- @param slugs string[]
 --- @param tiers table<string, integer>|nil slug -> tier (default 2)
---- @return { slug: string, entries: DevDocsEntry[], tier: integer }[]
+--- @return { slug: string, entries: DevDocsEntry[], names: string[], tier: integer }[]
 function M.sources(slugs, tiers)
   local out = {}
   for _, slug in ipairs(slugs) do
     if store.is_installed(slug) then
-      out[#out + 1] = { slug = slug, entries = store.entries(slug), tier = tiers and tiers[slug] or 2 }
+      out[#out + 1] = {
+        slug = slug,
+        entries = store.entries(slug),
+        names = store.names(slug),
+        tier = tiers and tiers[slug] or 2,
+      }
     end
   end
   return out

@@ -50,7 +50,7 @@ function M.search(query)
     return
   end
   local slug_filter, text = search.parse_query(query)
-  local order = slug_filter and { slug_filter } or detect.lookup_order()
+  local order = slug_filter and { slug_filter } or detect.search_order()
   search.grep(text, order, nil, function(hits, err)
     if err then
       notify(err, vim.log.levels.ERROR)
@@ -252,6 +252,28 @@ function M.status()
   notify(table.concat(lines, "\n"))
 end
 
+--- Forget what was detected for this buffer's project (languages, versions,
+--- tool versions) and detect again. `all`: forget every project.
+--- @param opts { all?: boolean }|nil
+function M.resync(opts)
+  opts = opts or {}
+  local detect = require "devdocs.detect"
+  local projects = require "devdocs.projects"
+  local bufnr = vim.api.nvim_get_current_buf()
+  local root = detect.root(bufnr)
+  projects.forget((not opts.all) and root or nil)
+  detect.reset_cache()
+  local b = detect.buffer(bufnr)
+  local what = opts.all and "every project" or (root or "this buffer (not in a project)")
+  notify(("re-detected %s\n%s"):format(what, table.concat(detect.describe(b), "\n")))
+end
+
+--- What devdocs decided for the current buffer and why.
+function M.detect()
+  local detect = require "devdocs.detect"
+  notify(table.concat(detect.describe(detect.buffer()), "\n"))
+end
+
 --- Statusline text while installs run, "" otherwise.
 --- @return string
 function M.statusline()
@@ -399,6 +421,13 @@ end
 function M.setup(opts)
   local c = require("devdocs.config").resolve(opts)
   local group = vim.api.nvim_create_augroup("devdocs", { clear = true })
+  -- a buffer's docs are cached for the session; these change what it resolves to
+  vim.api.nvim_create_autocmd({ "FileType", "BufFilePost", "BufWipeout", "LspAttach", "LspDetach" }, {
+    group = group,
+    callback = function(ev)
+      require("devdocs.detect").forget_buffer(ev.buf)
+    end,
+  })
   if c.install_as_needed and not c.import.import_only then
     vim.api.nvim_create_autocmd("FileType", {
       group = group,

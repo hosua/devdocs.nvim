@@ -67,7 +67,7 @@ One command with subcommands, plus flat aliases for each action.
 | `definition [text]` | `:DevDocsShowDefinition` | page/section for the symbol under the cursor, the visual selection, or `text` |
 | `example [text]` | `:DevDocsShowExample` | only the code examples of that entry |
 | `open <doc> [entry]` | `:DevDocsOpen` | open a doc by slug/name (`python`, `css`, `node~22_lts`), optionally at an entry |
-| `search [query]` | `:DevDocsSearch` | grep every enabled doc; `@css …` narrows to one doc |
+| `search [query]` | `:DevDocsSearch` | grep the buffer's docs, then the newest version of every other enabled doc; `@css …` narrows to one doc (any version: `@python~3.9`) |
 | `list` | `:DevDocsList` | the manager |
 | `install [doc]` | `:DevDocsInstall` | docs for the current buffer (right version), or a named doc. `!` reinstalls |
 | `install-all` | `:DevDocsInstallAll` | every doc devdocs offers (asks; `!` skips the question). Already installed docs are skipped |
@@ -75,6 +75,8 @@ One command with subcommands, plus flat aliases for each action.
 | `update [doc]` | `:DevDocsUpdate` | reinstall one doc, or every installed doc the docs list shows as newer |
 | `sync` | | install what `import.docs` (or the Mason-derived defaults) asks for |
 | `status` | | running install jobs |
+| `detect` | | what this buffer resolved to: project root, language and how it was found, the doc version and where that came from |
+| `resync` | | forget what was detected for this buffer's project (and tool versions) and detect again. `!` forgets every project |
 | `recent` | | pages viewed recently |
 | `mirror [--force] [--scrape]` | `:DevDocsForceCloneAndScrape` (= `--force`) | clone freeCodeCamp/devdocs, pull every doc through its container, install-all from that tree |
 
@@ -93,6 +95,7 @@ map("n", "<leader>dl", "<cmd>DevDocs list<cr>", { desc = "devdocs list / manage 
 map("n", "<leader>di", "<cmd>DevDocs install<cr>", { desc = "devdocs install docs for this buffer" })
 map("n", "<leader>dI", ":DevDocs install ", { desc = "devdocs install a named doc" })
 map("n", "<leader>da", "<cmd>DevDocs install-all<cr>", { desc = "devdocs install all docs" })
+map("n", "<leader>dr", "<cmd>DevDocs resync<cr>", { desc = "devdocs re-detect project languages/versions" })
 ```
 
 Inside the **viewer**:
@@ -133,6 +136,35 @@ Inside the **manager**:
 | `A` | install every doc (asks) |
 | `?` | help |
 | `q`, `<Esc>` | close |
+
+## How a lookup picks its docs
+
+A lookup searches only the docs of the buffer's language, in the version its
+project uses, so it stays instant with hundreds of docs installed.
+
+1. **Language**, first that matches: `extra_filetypes`, file-name rules
+   (`package.json`, `Dockerfile`, `.npmrc`, …), the filetype, the file
+   extension (`.hh`, `.cppm`, `.tofu`, `.pyi`, … for buffers whose filetype is
+   empty or unknown), the shebang (`#!/usr/bin/env -S python3.12`), then shell
+   dotfiles (`.bashrc`, `.xinitrc`, other `*rc` files) as your `$SHELL`.
+   Nothing matched: the newest version of every installed doc.
+2. **Version**, only for docs with more than one installed version: an
+   attached language server (`lua_ls` `Lua.runtime.version`, pyright's
+   `python.pythonPath`), a version in the shebang, the project's files
+   (`.nvmrc`, `.python-version`, `pyproject.toml`, `go.mod`, `.luarc.json`,
+   `node_modules/typescript`, …), then the installed tool (`fish --version`).
+   Nothing found: the newest.
+3. **Project root**: the enclosing git repository, else the nearest marker
+   (`package.json`, `pyproject.toml`, …). `/` and `$HOME` never count, so a
+   dotfiles repo in your home is not one big project. Version files are read
+   in the nearest package first, then the repo root.
+
+Answers are cached per buffer for the session and per project in
+`projects.json`, with the size and mtime of every file that was looked at.
+The first time a session touches a project those files are checked again, so
+editing `.nvmrc` is noticed on the next start. `:DevDocs resync` forces it now;
+`:DevDocs detect` shows what was decided and why. `lookup.scope = "all"` brings
+back searching every installed doc after the buffer's own.
 
 ## Configuration
 
@@ -213,6 +245,10 @@ Inside the **manager**:
     -- When the symbol under the cursor has no doc entry:
     -- "search" opens the search picker with the word, "lsp_hover" calls vim.lsp.buf.hover(), "none" notifies.
     fallback = "search",
+    -- "buffer": when the buffer's language is known, look only in its docs (the version
+    -- its project uses); otherwise in the newest version of every doc.
+    -- "all": the buffer's docs first, then every installed doc (slow with many docs installed).
+    scope = "buffer",
   },
 
   -- filetype -> { slug bases }, merged over the built-in table (lua/devdocs/langmap.lua).
@@ -299,6 +335,7 @@ Everything is under `data_dir` (`stdpath("data")/devdocs`):
 ```
 manifest.json                 cached docs.json  { version, fetched_at, docs }
 state.json                    { version = 1, enabled = { slug = false }, recent = [...] }
+projects.json                 { version = 1, roots = { [dir] = { bases, files } }, tools = { [exe] = { v, stamp } } }  detection cache
 docs/<slug>/meta.json         { version = 1, slug, name, doc_version, release, mtime, installed_at, page_count, entry_count, skipped }
 docs/<slug>/entries.tsv       name <TAB> path <TAB> type, one entry per line
 docs/<slug>/anchors.json      { version = 1, pages = { [page] = { [fragment id] = line } } }

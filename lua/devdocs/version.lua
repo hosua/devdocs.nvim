@@ -1,7 +1,9 @@
---- Version: which version of a doc a project uses, from files at its root
---- (no subprocesses here; detect.lua adds the async `node --version` style
---- fallbacks), and which available doc version to pick for it. Pure apart
---- from reading the named project files.
+--- Version: which version of a doc a buffer should get, and which available
+--- doc version to pick for it. Sources, cheapest first: an attached language
+--- server's settings (from_lsp), files in the project (detectors), and the
+--- installed tool's `--version` (tool_version, a blocking subprocess run at
+--- most once per binary; projects.lua persists it). detect.lua decides the
+--- order and caches.
 local manifest = require "devdocs.manifest"
 
 local M = {}
@@ -83,7 +85,14 @@ end
 
 -- ---------------------------------------------------------------- project file detectors
 
+-- detect_with_files() collects every file a detector tries, present or not,
+-- so projects.lua can tell when a cached answer went stale.
+local touched
+
 local function read(file)
+  if touched then
+    touched[#touched + 1] = file
+  end
   local f = io.open(file, "rb")
   if not f then
     return nil
@@ -257,7 +266,9 @@ M.detectors = {
     return package_json(root, "bootstrap")
   end,
   typescript = function(root)
-    return package_json(root, "typescript")
+    -- the compiler actually installed beats the range in package.json
+    local installed = json(root .. "/node_modules/typescript/package.json")
+    return (installed and M.first_version(installed.version)) or package_json(root, "typescript")
   end,
   jest = function(root)
     return package_json(root, "jest")
@@ -353,6 +364,140 @@ function M.detect(base, root)
   end
   local ok, v = pcall(fn, root)
   return ok and v or nil
+end
+
+--- Detect from files, trying each dir in order (nearest package first, then
+--- the repo root), and return every file path that was looked at.
+--- @param base string
+--- @param dirs string[]
+--- @return string|nil version, string[] files, string|nil source "file:<name>"
+function M.detect_with_files(base, dirs)
+  local files = {}
+  if not M.detectors[base] then
+    return nil, files, nil
+  end
+  for _, dir in ipairs(dirs) do
+    touched = {}
+    local v = M.detect(base, dir)
+    local tried = touched
+    touched = nil
+    vim.list_extend(files, tried)
+    if v then
+      -- the last file read is the one that answered
+      return v, files, "file:" .. vim.fn.fnamemodify(tried[#tried] or "", ":t")
+    end
+  end
+  return nil, files, nil
+end
+
+-- ---------------------------------------------------------------- subprocesses
+
+--- Run a command, return stdout..stderr or nil. Replaced in tests.
+--- @param cmd string[]
+--- @return string|nil
+function M._run(cmd)
+  if vim.fn.executable(cmd[1]) ~= 1 then
+    return nil
+  end
+  local ok, obj = pcall(vim.system, cmd, { text = true })
+  if not ok then
+    return nil
+  end
+  local res = obj:wait(1000)
+  if not res or res.code ~= 0 then
+    return nil
+  end
+  return (res.stdout or "") .. (res.stderr or "")
+end
+
+--- base -> command that prints the installed tool's version.
+--- @type table<string, string[]>
+M.tools = {
+  bash = { "bash", "--version" },
+  zsh = { "zsh", "--version" },
+  fish = { "fish", "--version" },
+  node = { "node", "--version" },
+  python = { "python3", "--version" },
+  lua = { "lua", "-v" },
+  ruby = { "ruby", "--version" },
+  go = { "go", "version" },
+  php = { "php", "--version" },
+  perl = { "perl", "-e", "print $^V" },
+  elixir = { "elixir", "--short-version" },
+  openjdk = { "java", "-version" },
+  deno = { "deno", "--version" },
+  kotlin = { "kotlin", "-version" },
+  dart = { "dart", "--version" },
+  postgresql = { "psql", "--version" },
+  cmake = { "cmake", "--version" },
+  godot = { "godot", "--version" },
+  julia = { "julia", "--version" },
+}
+
+--- Version of the installed tool for `base` (blocking, up to 1 s), or nil.
+--- @param base string
+--- @return string|nil
+function M.tool_version(base)
+  local cmd = M.tools[base]
+  if not cmd then
+    return nil
+  end
+  local out = M._run(cmd)
+  if not out then
+    return nil
+  end
+  -- "go version go1.23.2" / "fish, version 4.0.2" / "v22.11.0": first x.y[.z]
+  return out:match "(%d+%.%d+%.%d+)" or out:match "(%d+%.%d+)"
+end
+
+-- ---------------------------------------------------------------- language servers
+
+local function settings_of(client)
+  return client.settings or (client.config and client.config.settings) or {}
+end
+
+--- base -> fun(client): version|nil, for clients whose settings name it.
+--- @type table<string, fun(client: table): string|nil>
+M.lsp_detectors = {
+  lua = function(client)
+    if not client.name:find("lua", 1, true) then
+      return nil
+    end
+    local rt = vim.tbl_get(settings_of(client), "Lua", "runtime", "version")
+    if type(rt) ~= "string" then
+      return nil
+    end
+    return rt:lower():find "jit" and "5.1" or M.first_version(rt)
+  end,
+  python = function(client)
+    if not client.name:find "pyright" and client.name ~= "pylsp" then
+      return nil
+    end
+    local py = vim.tbl_get(settings_of(client), "python", "pythonPath")
+    if type(py) ~= "string" or py == "" then
+      return nil
+    end
+    local out = M._run { py, "--version" }
+    return out and M.first_version(out:match "Python%s+([%d%.]+)") or nil
+  end,
+}
+
+--- Version of `base` named by an attached language server's settings.
+--- @param base string
+--- @param clients table[] vim.lsp.get_clients{ bufnr = ... }
+--- @return string|nil version, string|nil source "lsp:<client>"
+function M.from_lsp(base, clients)
+  local fn = M.lsp_detectors[base]
+  if not fn then
+    return nil
+  end
+  for _, client in ipairs(clients or {}) do
+    local ok, v = pcall(fn, client)
+    if ok and v then
+      return v, "lsp:" .. client.name
+    end
+  end
+  return nil
 end
 
 return M

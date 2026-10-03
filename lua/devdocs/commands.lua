@@ -41,6 +41,12 @@ M.subcommands = {
   status = function()
     api().status()
   end,
+  resync = function(_, bang)
+    api().resync { all = bang }
+  end,
+  detect = function()
+    api().detect()
+  end,
   recent = function()
     api().recent()
   end,

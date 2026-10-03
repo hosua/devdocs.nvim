@@ -7,19 +7,35 @@ local paths = require "devdocs.paths"
 
 local M = {}
 
-M.VERSIONS = { state = 1, meta = 1, anchors = 1 }
+M.VERSIONS = { state = 1, meta = 1, anchors = 1, projects = 1 }
 
-local cache = { meta = {}, entries = {}, anchors = {}, installed = nil }
+local cache = { meta = {}, entries = {}, names = {}, anchors = {}, installed = nil, state = nil }
+local subscribers = {}
+
+--- Call `fn` whenever installed docs or state change (detect.lua drops its
+--- per-buffer profiles then).
+--- @param fn fun()
+function M.on_invalidate(fn)
+  subscribers[#subscribers + 1] = fn
+end
+
+local function notify_subscribers()
+  for _, fn in ipairs(subscribers) do
+    pcall(fn)
+  end
+end
 
 --- Drop every cached record (one slug, or all).
 --- @param slug string|nil
 function M.invalidate(slug)
   if slug then
-    cache.meta[slug], cache.entries[slug], cache.anchors[slug] = nil, nil, nil
+    cache.meta[slug], cache.entries[slug], cache.names[slug], cache.anchors[slug] = nil, nil, nil, nil
   else
-    cache = { meta = {}, entries = {}, anchors = {}, installed = nil }
+    cache = { meta = {}, entries = {}, names = {}, anchors = {}, installed = nil, state = nil }
   end
   cache.installed = nil
+  cache.state = nil
+  notify_subscribers()
 end
 
 --- @param file string
@@ -75,7 +91,7 @@ end
 
 --- Refuse to write over a record whose version is newer than this plugin knows.
 --- @param file string
---- @param kind "state"|"meta"|"anchors"
+--- @param kind "state"|"meta"|"anchors"|"projects"
 --- @return boolean ok, string|nil err
 local function version_guard(file, kind)
   local existing = M.read_json(file)
@@ -92,7 +108,7 @@ end
 
 --- @param file string
 --- @param tbl table
---- @param kind "state"|"meta"|"anchors"
+--- @param kind "state"|"meta"|"anchors"|"projects"
 --- @return boolean ok, string|nil err
 function M.write_json(file, tbl, kind)
   local ok, err = version_guard(file, kind)
@@ -106,17 +122,23 @@ end
 -- ---------------------------------------------------------------- state
 
 local function default_state()
-  return { version = M.VERSIONS.state, enabled = {}, project_versions = {}, recent = {} }
+  return { version = M.VERSIONS.state, enabled = {}, recent = {} }
 end
 
+--- Read once per session (detect.lua asks on every buffer); update_state and
+--- invalidate() refresh it. Callers get a copy.
 --- @return table state (never nil; a missing or corrupt file yields the defaults)
 --- @return string|nil err set when the file exists but could not be read
 function M.state()
-  local st, err = M.read_json(paths.state_file())
-  if not st then
-    return default_state(), err ~= "missing" and err or nil
+  if not cache.state then
+    local st, err = M.read_json(paths.state_file())
+    if not st then
+      -- a read error is not cached: the next call tries again
+      return default_state(), err ~= "missing" and err or nil
+    end
+    cache.state = vim.tbl_deep_extend("keep", st, default_state())
   end
-  return vim.tbl_deep_extend("keep", st, default_state())
+  return vim.deepcopy(cache.state)
 end
 
 --- Re-read, apply `fn` (which returns the new state), write. Never mutates
@@ -124,9 +146,13 @@ end
 --- @param fn fun(state: table): table
 --- @return boolean ok, string|nil err
 function M.update_state(fn)
+  cache.state = nil
   local st = M.state()
-  local new = fn(vim.deepcopy(st))
-  return M.write_json(paths.state_file(), new, "state")
+  local new = fn(st)
+  local ok, err = M.write_json(paths.state_file(), new, "state")
+  cache.state = nil
+  notify_subscribers()
+  return ok, err
 end
 
 -- ---------------------------------------------------------------- meta / installed
@@ -192,6 +218,16 @@ function M.entries(slug)
   end
   cache.entries[slug] = out
   return out
+end
+
+--- Normalized entry names of a doc, index-aligned with entries(slug). Cached.
+--- @param slug string
+--- @return string[]
+function M.names(slug)
+  if not cache.names[slug] then
+    cache.names[slug] = require("devdocs.rank").normalized_names(M.entries(slug))
+  end
+  return cache.names[slug]
 end
 
 --- @param entries DevDocsEntry[]

@@ -74,6 +74,23 @@ function M.score_name(name, query)
   return math.min(25, 5 + score / #q * 4)
 end
 
+--- Normalized names of `entries`, index-aligned: the prefilter of lookup().
+--- store.lua caches one list per doc.
+--- @param entries DevDocsEntry[]
+--- @return string[]
+function M.normalized_names(entries)
+  local out = {}
+  for i, e in ipairs(entries) do
+    out[i] = M.normalize(e.name)
+  end
+  return out
+end
+
+-- Every score >= this needs the normalized query inside the normalized name
+-- (only the fuzzy tier, capped at 25, matches without it), so a plain find
+-- over the cached names can skip score_name for nearly all entries.
+local PREFILTER_MIN = 30
+
 --- @class DevDocsHit
 --- @field slug string
 --- @field entry DevDocsEntry
@@ -82,18 +99,24 @@ end
 
 --- Rank entries from several docs against ordered candidate names.
 --- @param candidates string[] most specific first ("std::cout", "cout")
---- @param sources { slug: string, entries: DevDocsEntry[], tier: integer }[]
+--- @param sources { slug: string, entries: DevDocsEntry[], tier: integer, names?: string[] }[]
 --- @param opts { limit?: integer, min_score?: number }|nil
 --- @return DevDocsHit[]
 function M.lookup(candidates, sources, opts)
   opts = opts or {}
   local min_score = opts.min_score or 30
   local best = {}
+  local prefilter = min_score >= PREFILTER_MIN
   for ci, cand in ipairs(candidates) do
+    local q = M.normalize(cand)
     for _, src in ipairs(sources) do
       local bonus = M.TIER_BONUS[src.tier] or 0
-      for _, e in ipairs(src.entries) do
-        local s = M.score_name(e.name, cand)
+      local names = prefilter and src.names or nil
+      for i, e in ipairs(src.entries) do
+        local s
+        if not names or names[i]:find(q, 1, true) then
+          s = M.score_name(e.name, cand)
+        end
         if s and s >= min_score then
           -- earlier candidates are more specific: a hit on them is worth more
           s = s + bonus - (ci - 1) * 5
