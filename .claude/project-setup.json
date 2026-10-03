@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "repo": "hosua/devdocs.nvim",
+  "created": "2026-10-03",
+  "updated": "2026-10-03",
+  "declined_all": false,
+  "components": {
+    "cicd": {
+      "status": "enabled",
+      "decided": "2026-10-03",
+      "notes": "adopted existing ci.yml; added lint job (stylua 2.5.2 pinned), test matrix nvim stable + v0.11.0, concurrency, workflow_dispatch, persist-credentials false; edited: tests/run.lua (ignore nvim 0.11.0 runtime _ leak); public repo = free",
+      "files": [
+        ".github/workflows/ci.yml"
+      ]
+    }
+  }
+}
