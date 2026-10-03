@@ -453,6 +453,48 @@ function M.uninstall(slug)
   return true
 end
 
+--- Uninstall several docs, carrying on past failures.
+--- @param slugs string[]
+--- @return integer removed, string[] errors  "slug: reason", in input order
+function M.uninstall_many(slugs)
+  local n, errors = 0, {}
+  for _, slug in ipairs(slugs) do
+    local ok, err = M.uninstall(slug)
+    if ok then
+      n = n + 1
+    else
+      errors[#errors + 1] = ("%s: %s"):format(tostring(slug), err)
+    end
+  end
+  return n, errors
+end
+
+--- Bytes on disk used by installed docs (`du -sk`), nil when none of them
+--- exist or du fails. For the "how much does this free" line of a confirm.
+--- @param slugs string[]
+--- @return integer|nil
+function M.disk_usage(slugs)
+  local dirs = {}
+  for _, slug in ipairs(slugs) do
+    if paths.valid_slug(slug) and vim.uv.fs_stat(paths.doc_dir(slug)) then
+      dirs[#dirs + 1] = paths.doc_dir(slug)
+    end
+  end
+  if #dirs == 0 then
+    return nil
+  end
+  local cmd = { "du", "-skc" }
+  vim.list_extend(cmd, dirs)
+  local ok, res = pcall(function()
+    return vim.system(cmd, { text = true }):wait()
+  end)
+  if not ok or res.code ~= 0 then
+    return nil
+  end
+  local kb = (res.stdout or ""):match "(%d+)%s+total%s*$"
+  return kb and tonumber(kb) * 1024 or nil
+end
+
 --- Snapshot of every job (queued, running, and the last done/error ones).
 --- @return DevDocsJob[]
 function M.status()

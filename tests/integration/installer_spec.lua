@@ -55,6 +55,7 @@ describe("installer (integration)", function()
   local cdn = tmpdir()
   local lua_meta = make_doc(cdn, "lua~5.4", "Lua")
   make_doc(cdn, "css", "CSS")
+  make_doc(cdn, "lua~5.1", "Lua")
 
   config.resolve {
     data_dir = data,
@@ -173,6 +174,92 @@ describe("installer (integration)", function()
     eq(false, okv)
     eq("not installed", err)
     ok(not installer.uninstall "../lua~5.4")
+  end)
+
+  it("disk_usage sums installed doc dirs and ignores missing ones", function()
+    local bytes = installer.disk_usage { "lua~5.4", "nope" }
+    ok(type(bytes) == "number" and bytes > 0, vim.inspect(bytes))
+    eq(nil, installer.disk_usage {})
+    eq(nil, installer.disk_usage { "nope" })
+  end)
+
+  it("uninstall_many deletes several docs and reports the ones it could not", function()
+    for _, slug in ipairs { "css", "lua~5.1" } do
+      local okv, err = wait_cb(function(cb)
+        installer.install(slug, { force = true }, cb)
+      end)
+      eq(true, okv, err)
+    end
+    eq({ "css", "lua~5.1", "lua~5.4" }, store.installed())
+    local n, errors = installer.uninstall_many { "css", "lua~5.1", "nope", "../x" }
+    eq(2, n)
+    eq(2, #errors)
+    ok(errors[1]:find("nope", 1, true), errors[1])
+    ok(errors[2]:find("invalid", 1, true), errors[2])
+    eq({ "lua~5.4" }, store.installed())
+  end)
+
+  it("prune deletes every installed version but the current one", function()
+    local okv, err = wait_cb(function(cb)
+      installer.install("lua~5.1", { force = true }, cb)
+    end)
+    eq(true, okv, err)
+    local docs = { { slug = "lua~5.4", version = "5.4" }, { slug = "lua~5.1", version = "5.1" } }
+    local done
+    require("devdocs").prune {
+      yes = true,
+      docs = docs,
+      on_done = function(n, errors)
+        done = { n, errors }
+      end,
+    }
+    eq({ 1, {} }, done)
+    eq({ "lua~5.4" }, store.installed())
+    -- one version left: nothing to do, nothing deleted
+    done = nil
+    require("devdocs").prune { yes = true, docs = docs, base = "lua" }
+    eq(nil, done)
+    eq({ "lua~5.4" }, store.installed())
+  end)
+
+  it("prune keeps a version a project pins, and the newest enabled one", function()
+    local projects = require "devdocs.projects"
+    local okv, err = wait_cb(function(cb)
+      installer.install("lua~5.1", { force = true }, cb)
+    end)
+    eq(true, okv, err)
+    eq({ "lua~5.1", "lua~5.4" }, store.installed())
+    local docs = { { slug = "lua~5.4", version = "5.4" }, { slug = "lua~5.1", version = "5.1" } }
+    local function prune()
+      local done
+      require("devdocs").prune {
+        yes = true,
+        docs = docs,
+        on_done = function(n, errors)
+          done = { n, errors }
+        end,
+      }
+      return done
+    end
+    -- a project uses 5.1: nothing is deleted
+    local root = tmpdir()
+    projects.version(root, "lua", function()
+      return "5.1", {}, "file:.lua-version"
+    end)
+    eq(nil, prune())
+    eq({ "lua~5.1", "lua~5.4" }, store.installed())
+    projects.forget()
+    -- the newest (5.4) is disabled: the newest enabled one (5.1) is kept
+    store.update_state(function(st)
+      st.enabled["lua~5.4"] = false
+      return st
+    end)
+    eq({ 1, {} }, prune())
+    eq({ "lua~5.1" }, store.installed())
+    store.update_state(function(st)
+      st.enabled["lua~5.4"] = nil
+      return st
+    end)
   end)
 
   it("status lists jobs and clear_finished drops the settled ones", function()

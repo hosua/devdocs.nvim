@@ -8,6 +8,7 @@
 ---   <data_dir>/docs/<slug>/anchors.json    page -> { fragment id -> line }
 ---   <data_dir>/docs/<slug>/pages/<path>.md one file per db.json key
 ---   <data_dir>/tmp/<slug>.<pid>/           staging for an install in progress
+---   <data_dir>/releases/<product>.json     cached endoflife.date release cycles
 local M = {}
 
 local SITE = "https://devdocs.io"
@@ -26,6 +27,10 @@ end
 
 function M.state_file()
   return data_dir() .. "/state.json"
+end
+
+function M.releases_dir()
+  return data_dir() .. "/releases"
 end
 
 function M.docs_dir()

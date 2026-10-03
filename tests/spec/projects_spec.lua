@@ -98,4 +98,31 @@ describe("projects", function()
     vim.fn.delete(data .. "/projects.json")
     projects.reset_session()
   end)
+
+  it("pins() lists every project's detected version, skipping misses and stale records", function()
+    projects.forget()
+    local a, b, c = tmpdir(), tmpdir(), tmpdir()
+    vim.fn.writefile({ "3.12" }, a .. "/.python-version")
+    projects.version(a, "python", counting("3.12", { a .. "/.python-version" }, "file:.python-version"))
+    projects.version(a, "lua", counting(nil, {}, nil))
+    projects.version(b, "node", counting("20", {}, "file:.nvmrc"))
+    vim.fn.writefile({ "x" }, c .. "/.nvmrc")
+    projects.version(c, "node", counting("22", { c .. "/.nvmrc" }, "file:.nvmrc"))
+    -- a later session: c's .nvmrc changed, so its record no longer holds
+    projects.reset_session()
+    vim.fn.writefile({ "changed" }, c .. "/.nvmrc")
+    local pins = projects.pins()
+    table.sort(pins, function(x, y)
+      return x.root < y.root
+    end)
+    local want = {
+      { root = a, base = "python", version = "3.12" },
+      { root = b, base = "node", version = "20" },
+    }
+    table.sort(want, function(x, y)
+      return x.root < y.root
+    end)
+    eq(want, pins)
+    projects.forget()
+  end)
 end)

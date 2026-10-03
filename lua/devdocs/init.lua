@@ -211,6 +211,64 @@ function M.uninstall(slug, opts)
   end
 end
 
+--- Delete old versions. Per language, keep the newest installed version
+--- that is enabled (the newest installed one when all are disabled; versions
+--- compare across the docs list and installed meta, so an install newer than
+--- the list is kept) plus every version a project pins in projects.json, and
+--- delete the other installed versions. A language with one installed
+--- version is left alone. Asks first with the full list unless `yes`.
+--- @param opts { base?: string, yes?: boolean, docs?: DevDocsDoc[], on_done?: fun(removed: integer, errors: string[]) }|nil
+---   base: only this language ("python" or any of its slugs); docs: use this
+---   docs list instead of the cached/fetched one
+function M.prune(opts)
+  opts = opts or {}
+  local installer = require "devdocs.installer"
+  local manifest = require "devdocs.manifest"
+  local paths = require "devdocs.paths"
+  local selection = require "devdocs.ui.selection"
+  local store = require "devdocs.store"
+  local function run(docs)
+    local installed = {}
+    for _, s in ipairs(store.installed()) do
+      installed[s] = store.meta(s) or {}
+    end
+    local base = opts.base and opts.base ~= "" and manifest.base(opts.base) or nil
+    local disabled = {}
+    for slug, on in pairs(store.state().enabled) do
+      disabled[slug] = on == false or nil
+    end
+    local pinned = selection.pinned_slugs(installed, docs, require("devdocs.projects").pins())
+    local slugs, held = selection.prune_targets(installed, docs, base, { disabled = disabled, pinned = pinned })
+    local note = selection.prune_note(held, pinned)
+    if #slugs == 0 then
+      local msg = base and ("%s: nothing to prune"):format(base) or "nothing to prune"
+      notify(note and (msg .. "; " .. note) or msg)
+      return
+    end
+    local msg = selection.confirm_message(slugs, installer.disk_usage(slugs), paths.docs_dir(), note and { note })
+    if not opts.yes and not require("devdocs.ui.float").confirm(msg) then
+      return
+    end
+    local n, errors = installer.uninstall_many(slugs)
+    if #errors > 0 then
+      notify(("pruned %d, failed %d: %s"):format(n, #errors, table.concat(errors, "; ")), vim.log.levels.WARN)
+    else
+      notify(("pruned %d old version%s: %s"):format(n, n == 1 and "" or "s", table.concat(slugs, ", ")))
+    end
+    if opts.on_done then
+      opts.on_done(n, errors)
+    end
+  end
+  if opts.docs then
+    run(opts.docs)
+    return
+  end
+  manifest.get(function(docs)
+    -- offline: fall back to the cached list, then to "newest installed"
+    run(docs or manifest.cached() or {})
+  end)
+end
+
 --- Update one doc, or every installed doc that the manifest lists as newer.
 --- @param slug string|nil
 function M.update(slug)
