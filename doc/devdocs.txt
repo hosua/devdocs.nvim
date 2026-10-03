@@ -130,8 +130,23 @@ require("devdocs").setup({opts})
                       (nvim-treesitter's, else one bundled for lua and c)
                       finds its declaration in the buffer. Only the word
                       under the cursor is classified (on whitespace or
-                      punctuation the docs open). An empty hover falls
+                      punctuation: see lookup.explain). An empty hover falls
                       through to the docs
+                                                    *devdocs-lookup-explain*
+  lookup.explain      true: with lookup.smart, a small popup at the cursor
+                      says there is nothing to document when the word is a
+                      string, char or number literal, a comment, whitespace,
+                      an operator or punctuation (no picker, no hover, no
+                      doc lookup); true, false, nil, NULL or None the docs
+                      have no exact entry for; a variable, parameter or
+                      field hover has nothing on (no client or an empty
+                      hover); or a function, type, macro or variable declared
+                      in the buffer that neither docs nor hover know. Does
+                      not need a client that can hover. Strings are detected
+                      by treesitter (code injected into a string is not a
+                      string), else LSP semantic tokens, else |:syntax|. The
+                      popup closes when the cursor moves.
+                      false: those go to the docs like any name.
 
 A lookup's language comes from the filetype, then the file extension, the
 shebang, then shell dotfiles (as $SHELL). Its version, for docs with several
@@ -252,6 +267,9 @@ than the plugin knows are never overwritten.
   DevDocsProgress DiagnosticInfo   DevDocsKey @type.builtin
   DevDocsLink Underlined           DevDocsMark DiagnosticHint
   DevDocsCost DiagnosticError      DevDocsFreed DiagnosticOk
+  DevDocsNote NormalFloat          DevDocsNoteSubject Identifier
+
+DevDocsNote and DevDocsNoteSubject color the lookup.explain popup.
 
 Key hints (manager hint line and help, viewer footer and help, apply menu)
 draw keys in DevDocsKey and actions in DevDocsDim. DevDocsKey links to

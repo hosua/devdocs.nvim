@@ -6,6 +6,12 @@
 --- "symbol", "library" and "unknown" all mean docs first, hover when the docs
 --- have no entry named exactly like the word (lookup.lua).
 ---
+--- Besides the class, target_at reports what the cursor is on: a string,
+--- comment or number literal, whitespace, an operator or punctuation all give
+--- the class "trivial" (nothing to document, lookup.lua shows a popup), and a
+--- name carries its kind (local, parameter, function...) and the line of its
+--- declaration in the buffer when treesitter finds one.
+---
 --- Classes:
 ---   "keyword"  language keyword or operator word (local, return, sizeof)
 ---   "builtin"  treesitter *.builtin capture (print, int, nil, self)
@@ -17,9 +23,19 @@
 ---   "symbol"   a project function/type, or a variable that is part of a
 ---              chain (`t.field`, `vim.api`)
 ---   "unknown"  no parser, no tokens, or nothing decisive
+---   "trivial"  a string/char literal, comment, number, whitespace, operator
+---              or punctuation: nothing to look up
 local M = {}
 
---- @alias DevDocsTokenClass "keyword"|"builtin"|"library"|"variable"|"symbol"|"unknown"
+--- @alias DevDocsTokenClass "keyword"|"builtin"|"library"|"variable"|"symbol"|"unknown"|"trivial"
+
+--- What the cursor is on.
+--- @class DevDocsTarget
+--- @field class DevDocsTokenClass
+--- @field kind string|nil  "string"|"comment"|"number"|"boolean"|"nil"|"whitespace"|"operator"|"punctuation"
+---                          |"local"|"variable"|"parameter"|"field"|"function"|"type"|"macro"
+--- @field word string      literal text / identifier / operator chars; "" for comment and whitespace
+--- @field decl_line integer|nil  1-based line of the buffer-local declaration (treesitter locals only)
 
 --- Separators that make the word after them a member of what precedes it.
 local MEMBER_SEPS = { "::", "->", ".", ":" }
@@ -43,6 +59,100 @@ local SEMANTIC_SYMBOLS = {
   macro = true,
   decorator = true,
   event = true,
+}
+
+local STRING_TYPES = {
+  string = true,
+  string_literal = true,
+  string_content = true,
+  string_fragment = true,
+  raw_string_literal = true,
+  interpreted_string_literal = true,
+  template_string = true,
+  char_literal = true,
+  character_literal = true,
+  rune_literal = true,
+  character = true,
+  regex = true,
+  regex_pattern = true,
+  concatenated_string = true,
+  encapsed_string = true,
+  heredoc_body = true,
+  escape_sequence = true,
+}
+--- Node types that contain "string" but are not a literal: C `#include <stdio.h>`
+--- names a header the docs cover.
+local NOT_LITERAL = { system_lib_string = true }
+--- Code inside a string: not a literal.
+local INTERPOLATION = {
+  template_substitution = true,
+  interpolation = true,
+  string_interpolation = true,
+  interpolated_expression = true,
+}
+local NUMBER_TYPES = {
+  number = true,
+  number_literal = true,
+  integer = true,
+  float = true,
+  integer_literal = true,
+  float_literal = true,
+  int_literal = true,
+  imaginary_literal = true,
+  decimal_integer_literal = true,
+  hex_integer_literal = true,
+  octal_integer_literal = true,
+  binary_integer_literal = true,
+  decimal_floating_point_literal = true,
+  hex_floating_point_literal = true,
+}
+local BOOLEAN_TYPES = { ["true"] = true, ["false"] = true, boolean_literal = true, boolean = true }
+local NIL_TYPES = { ["nil"] = true, null = true, none = true, nullptr = true, undefined = true, null_literal = true }
+--- Languages injected into strings and comments that stay "not code".
+local TRIVIAL_INJECTIONS = {
+  comment = true,
+  luadoc = true,
+  jsdoc = true,
+  doxygen = true,
+  phpdoc = true,
+  printf = true,
+  regex = true,
+  luap = true,
+}
+local OPERATOR_CHARS = "[%+%-%*/%%=<>!&|%^~%?#]"
+local SEMANTIC_LITERALS = { comment = "comment", string = "string", regexp = "string", number = "number" }
+local SYNTAX_LITERALS =
+  { Comment = "comment", String = "string", Character = "string", Number = "number", Float = "number" }
+local SEMANTIC_KIND = {
+  variable = "variable",
+  parameter = "parameter",
+  property = "field",
+  typeParameter = "type",
+  ["function"] = "function",
+  method = "function",
+  class = "type",
+  struct = "type",
+  interface = "type",
+  enum = "type",
+  type = "type",
+  macro = "macro",
+}
+local DECL_KIND = {
+  parameter = "parameter",
+  var = "variable",
+  variable = "variable",
+  constant = "variable",
+  ["function"] = "function",
+  method = "function",
+  macro = "macro",
+  type = "type",
+  field = "field",
+}
+--- Ancestor node types that make a declared variable a "local" (function-scoped).
+local LOCAL_SCOPE = {
+  lua = { variable_declaration = true },
+  c = { compound_statement = true },
+  cpp = { compound_statement = true },
 }
 
 --- Identifier bytes: ASCII word characters and every byte of a multibyte
@@ -112,11 +222,136 @@ function M.context(line, s, e, lang)
   return { qualified = qualified, chain_head = chain_head }
 end
 
+local function is_comment_type(t)
+  return t:find("comment", 1, true) ~= nil
+end
+
+local function is_string_type(t)
+  return not NOT_LITERAL[t] and (STRING_TYPES[t] or t:find("string", 1, true) ~= nil) or false
+end
+
+--- Literal kind of a node and its ancestors (treesitter node types, innermost
+--- first), plus the index of the outermost node that is part of the literal
+--- (the whole string, quotes included). Code interpolated into a string is not
+--- a literal. A number or true/nil only counts at the node itself or its parent.
+--- @param types string[]
+--- @return string|nil kind "comment"|"string"|"number"|"boolean"|"nil"
+--- @return integer|nil index
+function M.literal_from_nodes(types)
+  for i, t in ipairs(types) do
+    if INTERPOLATION[t] or NOT_LITERAL[t] then
+      return nil
+    elseif is_comment_type(t) then
+      local j = i
+      while types[j + 1] and is_comment_type(types[j + 1]) do
+        j = j + 1
+      end
+      return "comment", j
+    elseif is_string_type(t) then
+      local j = i
+      while types[j + 1] and is_string_type(types[j + 1]) do
+        j = j + 1
+      end
+      return "string", j
+    elseif i <= 2 then
+      if NUMBER_TYPES[t] then
+        return "number", i
+      elseif BOOLEAN_TYPES[t] then
+        return "boolean", i
+      elseif NIL_TYPES[t] then
+        return "nil", i
+      end
+    end
+  end
+  return nil
+end
+
+--- Literal kind from treesitter highlight capture names (without the "@").
+--- @param names string[]
+--- @return string|nil kind "comment"|"string"|"number"
+function M.literal_kind(names)
+  for _, name in ipairs(names) do
+    if name:match "^comment" then
+      return "comment"
+    elseif name:match "^string" or name:match "^character" then
+      return "string"
+    elseif name:match "^number" then
+      return "number"
+    end
+  end
+  return nil
+end
+
+--- Literal kind from LSP semantic tokens covering a position.
+--- @param tokens table[]|nil
+--- @return string|nil kind
+function M.semantic_literal(tokens)
+  for _, tok in ipairs(tokens or {}) do
+    if SEMANTIC_LITERALS[tok.type] then
+      return SEMANTIC_LITERALS[tok.type]
+    end
+  end
+  return nil
+end
+
+--- Literal kind from `:syntax` group names (a group's own name, then the
+--- groups it links to).
+--- @param names string[]
+--- @return string|nil kind
+function M.syntax_literal(names)
+  for _, name in ipairs(names) do
+    if SYNTAX_LITERALS[name] then
+      return SYNTAX_LITERALS[name]
+    end
+  end
+  return nil
+end
+
+--- What a position that is not on an identifier holds.
+--- @param line string
+--- @param col integer 0-based byte
+--- @return string kind "whitespace"|"operator"|"punctuation"
+--- @return string text
+function M.nonword_kind(line, col)
+  local ch = line:sub(col + 1, col + 1)
+  if ch == "" or ch:match "%s" then
+    return "whitespace", ""
+  end
+  if ch == "." then
+    -- a lone "." is punctuation (member access); `..` and `...` are operators
+    local s, e = col + 1, col + 1
+    while s > 1 and line:sub(s - 1, s - 1) == "." do
+      s = s - 1
+    end
+    while e < #line and line:sub(e + 1, e + 1) == "." do
+      e = e + 1
+    end
+    if e > s then
+      return "operator", line:sub(s, e)
+    end
+    return "punctuation", "."
+  end
+  if ch:match(OPERATOR_CHARS) then
+    local s, e = col + 1, col + 1
+    while s > 1 and line:sub(s - 1, s - 1):match(OPERATOR_CHARS) do
+      s = s - 1
+    end
+    while e < #line and line:sub(e + 1, e + 1):match(OPERATOR_CHARS) do
+      e = e + 1
+    end
+    return "operator", line:sub(s, e)
+  end
+  return "punctuation", ch
+end
+
 --- Class from treesitter highlight capture names (without the "@").
 --- @param names string[]
 --- @param ctx { qualified?: boolean, chain_head?: boolean }
 --- @return DevDocsTokenClass
 function M.from_captures(names, ctx)
+  if M.literal_kind(names) then
+    return "trivial"
+  end
   local keyword, builtin, variable, member, other = false, false, false, false, false
   for _, name in ipairs(names) do
     if name:sub(1, 1) == "_" or name == "spell" or name == "nospell" or name == "none" then
@@ -154,8 +389,9 @@ end
 --- @param tokens table[]|nil items of vim.lsp.semantic_tokens.get_at_pos()
 --- @param ctx { qualified?: boolean, chain_head?: boolean }
 --- @return DevDocsTokenClass|nil
-function M.from_semantic(tokens, ctx)
-  local best
+--- @return string|nil token_type the type of the token that decided
+local function semantic_pick(tokens, ctx)
+  local best, best_type
   for _, tok in ipairs(tokens or {}) do
     local mods = tok.modifiers or {}
     local class
@@ -172,11 +408,20 @@ function M.from_semantic(tokens, ctx)
       class = "unknown"
     end
     if class == "library" then
-      return class
+      return class, tok.type
     end
-    best = best or class
+    if class and not best then
+      best, best_type = class, tok.type
+    end
   end
-  return best
+  return best, best_type
+end
+
+--- @param tokens table[]|nil
+--- @param ctx { qualified?: boolean, chain_head?: boolean }
+--- @return DevDocsTokenClass|nil
+function M.from_semantic(tokens, ctx)
+  return (semantic_pick(tokens, ctx))
 end
 
 --- The buffer's parsed language tree at (row, col), or nil.
@@ -260,18 +505,21 @@ function M.locals_query(lang)
   return fallback_queries[lang] or nil
 end
 
---- Whether the buffer declares `name` (a @local.definition* capture of the
---- locals query with that text). False without a locals query: a highlight
---- capture alone cannot tell a project's `count` from lua's `error` or C's
---- `errno` used as a value.
+--- The buffer's definition of `name` (a @local.definition* capture of the
+--- locals query with that text): the latest one at or before `row`, else the
+--- first one after it. nil without a locals query: a highlight capture alone
+--- cannot tell a project's `count` from lua's `error` or C's `errno` used as a
+--- value.
 --- @param ltree vim.treesitter.LanguageTree
 --- @param name string
---- @return boolean
-local function declared(ltree, bufnr, name)
+--- @param row integer 0-based cursor row
+--- @return TSNode|nil node, string|nil suffix "var", "function", ... ("" for a bare @local.definition)
+local function find_definition(ltree, bufnr, name, row)
   local query = M.locals_query(ltree:lang())
   if not query then
-    return false
+    return nil
   end
+  local best, best_suffix, best_row
   for _, tstree in ipairs(ltree:trees()) do
     for id, node in query:iter_captures(tstree:root(), bufnr, 0, -1) do
       local cap = query.captures[id]
@@ -279,30 +527,237 @@ local function declared(ltree, bufnr, name)
         (cap == "local.definition" or cap:sub(1, 17) == "local.definition.")
         and vim.treesitter.get_node_text(node, bufnr) == name
       then
-        return true
+        local r = node:start()
+        local better
+        if not best then
+          better = true
+        elseif r <= row then
+          better = best_row > row or r >= best_row
+        else
+          better = best_row > row and r < best_row
+        end
+        if better then
+          best, best_suffix, best_row = node, cap:match "^local%.definition%.(.+)$" or "", r
+        end
       end
     end
+  end
+  return best, best_suffix
+end
+
+--- Whether `node` sits inside one of the ancestor types of `scopes`.
+local function inside(node, scopes)
+  local p = node:parent()
+  while p do
+    if scopes[p:type()] then
+      return true
+    end
+    p = p:parent()
   end
   return false
 end
 
---- Class from treesitter alone: a "variable" must be declared in the buffer,
---- else it may be a library name and the docs go first ("symbol").
---- @return DevDocsTokenClass
-local function from_treesitter(bufnr, row, s, e, line, ctx)
-  local ltree = language_tree(bufnr, row, s)
-  if not ltree then
-    return "unknown"
+--- The treesitter parser of `bufnr`, or nil.
+local function host_parser(bufnr, row)
+  local ok, parser = pcall(vim.treesitter.get_parser, bufnr, nil, { error = false })
+  if not ok or not parser then
+    return nil
   end
-  local cap_ok, names = pcall(captures, ltree, bufnr, row, s)
-  local class = M.from_captures(cap_ok and names or {}, ctx)
-  if class == "variable" then
-    local d_ok, is_declared = pcall(declared, ltree, bufnr, line:sub(s + 1, e + 1))
-    if not (d_ok and is_declared) then
-      return "symbol"
+  pcall(parser.parse, parser, { row, row + 1 })
+  return parser
+end
+
+--- A literal (string, comment, number, true/nil...) from the host-language
+--- syntax tree at (row, col), ignoring injections so `"..."` stays a string.
+--- Code injected into a string (`vim.cmd("set number")`) is not a literal.
+--- @return DevDocsTarget|nil
+local function host_literal(parser, bufnr, row, col)
+  local ok, node = pcall(vim.treesitter.get_node, { bufnr = bufnr, pos = { row, col }, ignore_injections = true })
+  if not ok or not node then
+    return nil
+  end
+  local types, nodes = {}, {}
+  local n = node
+  while n do
+    types[#types + 1] = n:type()
+    nodes[#nodes + 1] = n
+    n = n:parent()
+  end
+  if NOT_LITERAL[types[1]] or NOT_LITERAL[types[2] or ""] then
+    return nil
+  end
+  local kind, idx = M.literal_from_nodes(types)
+  if not kind then
+    return nil
+  end
+  local function text()
+    local t_ok, t = pcall(vim.treesitter.get_node_text, nodes[idx], bufnr)
+    return t_ok and t or ""
+  end
+  if kind == "comment" then
+    return { class = "trivial", kind = "comment", word = "" }
+  elseif kind == "string" then
+    local l_ok, ltree = pcall(parser.language_for_range, parser, { row, col, row, col })
+    local inj = l_ok and ltree and ltree:lang() or parser:lang()
+    if inj ~= parser:lang() and not TRIVIAL_INJECTIONS[inj] then
+      return nil
+    end
+    return { class = "trivial", kind = "string", word = text() }
+  elseif kind == "number" then
+    return { class = "trivial", kind = "number", word = text() }
+  end
+  return { class = "builtin", kind = kind, word = text() }
+end
+
+--- Word of a literal found without treesitter: the semantic token's text, else
+--- the identifier under the cursor, "" for a comment.
+local function literal_word(kind, line, col, tok, row)
+  if kind == "comment" then
+    return ""
+  end
+  if tok and tok.line == row and tok.start_col and tok.end_col then
+    return line:sub(tok.start_col + 1, tok.end_col)
+  end
+  local s, e = M.word_at(line, col)
+  return s and line:sub(s + 1, e + 1) or ""
+end
+
+--- Literal kind from `:syntax` at (row, col) of the current buffer; follows
+--- each group's link chain (pythonNumber -> Constant, not Number).
+--- @return string|nil
+local function syntax_kind(row, col)
+  local ok, stack = pcall(vim.fn.synstack, row + 1, col + 1)
+  if not ok or type(stack) ~= "table" then
+    return nil
+  end
+  for _, id in ipairs(stack) do
+    local names = {}
+    local name = vim.fn.synIDattr(id, "name")
+    for _ = 1, 10 do
+      if not name or name == "" then
+        break
+      end
+      names[#names + 1] = name
+      local h_ok, hl = pcall(vim.api.nvim_get_hl, 0, { name = name, link = true })
+      name = h_ok and hl and hl.link or nil
+    end
+    local kind = M.syntax_literal(names)
+    if kind then
+      return kind
     end
   end
-  return class
+  return nil
+end
+
+--- Whether the host-language node at (row, col) is a NOT_LITERAL one.
+local function in_not_literal(bufnr, row, col)
+  local ok, node = pcall(vim.treesitter.get_node, { bufnr = bufnr, pos = { row, col }, ignore_injections = true })
+  if not ok or not node then
+    return false
+  end
+  local parent = node:parent()
+  return NOT_LITERAL[node:type()] == true or (parent ~= nil and NOT_LITERAL[parent:type()] == true)
+end
+
+--- Target for the identifier at [s, e] (0-based, inclusive) of `line`.
+--- @return DevDocsTarget
+local function identifier_target(bufnr, row, s, e, line)
+  local word = line:sub(s + 1, e + 1)
+  local ctx = M.context(line, s, e, vim.bo[bufnr].filetype)
+  -- Semantic tokens know the whole program: their "variable" needs no check.
+  local ok, tokens = pcall(vim.lsp.semantic_tokens.get_at_pos, bufnr, row, s)
+  local class, token_type
+  if ok then
+    class, token_type = semantic_pick(tokens, ctx)
+  end
+  local ltree = language_tree(bufnr, row, s)
+  local def_node, suffix
+  if ltree and not ctx.qualified then
+    local d_ok, node, sfx = pcall(find_definition, ltree, bufnr, word, row)
+    if d_ok then
+      def_node, suffix = node, sfx
+    end
+  end
+  local names = {}
+  if not class then
+    if not ltree then
+      class = "unknown"
+    else
+      local c_ok, found = pcall(captures, ltree, bufnr, row, s)
+      names = c_ok and found or {}
+      class = M.from_captures(names, ctx)
+      -- a "variable" must be declared in the buffer, else it may be a library name
+      if class == "variable" and not def_node then
+        class = "symbol"
+      end
+    end
+  end
+  if class == "trivial" and in_not_literal(bufnr, row, s) then
+    -- C `#include <stdio.h>`: highlighted as a string, but a header the docs cover
+    class = "unknown"
+  end
+  if class == "trivial" then
+    local kind = M.literal_kind(names)
+    return { class = "trivial", kind = kind, word = kind == "comment" and "" or word }
+  end
+  local kind
+  if def_node then
+    kind = DECL_KIND[suffix or ""]
+    if kind == "variable" and inside(def_node, LOCAL_SCOPE[ltree:lang()] or {}) then
+      kind = "local"
+    end
+  end
+  -- a declared variable wins over highlight noise (lua's @constant on an all-caps `M`)
+  if class == "unknown" and not token_type and (kind == "variable" or kind == "local" or kind == "parameter") then
+    class = "variable"
+  end
+  kind = kind or SEMANTIC_KIND[token_type or ""] or (class == "variable" and "variable" or nil)
+  return { class = class, kind = kind, word = word, decl_line = def_node and (def_node:start() + 1) or nil }
+end
+
+--- What is at (row, col) of `bufnr`: the class and, when it can tell, the kind
+--- of literal or name and where the name was declared.
+--- @param bufnr integer
+--- @param row integer 0-based
+--- @param col integer 0-based byte
+--- @return DevDocsTarget
+function M.target_at(bufnr, row, col)
+  local line = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1]
+  if not line then
+    return { class = "unknown", word = "" }
+  end
+  local parser = host_parser(bufnr, row)
+  if parser then
+    local lit = host_literal(parser, bufnr, row, col)
+    if lit then
+      return lit
+    end
+  else
+    local ok, tokens = pcall(vim.lsp.semantic_tokens.get_at_pos, bufnr, row, col)
+    local kind = ok and M.semantic_literal(tokens) or nil
+    if kind then
+      local tok
+      for _, t in ipairs(tokens) do
+        if SEMANTIC_LITERALS[t.type] == kind then
+          tok = t
+          break
+        end
+      end
+      return { class = "trivial", kind = kind, word = literal_word(kind, line, col, tok, row) }
+    end
+    if bufnr == vim.api.nvim_get_current_buf() then
+      kind = syntax_kind(row, col)
+      if kind then
+        return { class = "trivial", kind = kind, word = literal_word(kind, line, col, nil, row) }
+      end
+    end
+  end
+  local s, e = M.word_at(line, col)
+  if not s then
+    local kind, text = M.nonword_kind(line, col)
+    return { class = "trivial", kind = kind, word = text }
+  end
+  return identifier_target(bufnr, row, s, e, line)
 end
 
 --- Class of the identifier at (row, col) of `bufnr`.
@@ -311,22 +766,19 @@ end
 --- @param col integer 0-based byte
 --- @return DevDocsTokenClass
 function M.at(bufnr, row, col)
-  local line = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1]
-  if not line then
-    return "unknown"
+  return M.target_at(bufnr, row, col).class
+end
+
+--- Target under the cursor; "unknown" unless `bufnr` is the current window's
+--- buffer (the cursor would be someone else's).
+--- @param bufnr integer
+--- @return DevDocsTarget
+function M.target(bufnr)
+  if vim.api.nvim_get_current_buf() ~= bufnr then
+    return { class = "unknown", word = "" }
   end
-  local s, e = M.word_at(line, col)
-  if not s then
-    return "unknown"
-  end
-  local ctx = M.context(line, s, e, vim.bo[bufnr].filetype)
-  -- Semantic tokens know the whole program: their "variable" needs no check.
-  local ok, tokens = pcall(vim.lsp.semantic_tokens.get_at_pos, bufnr, row, s)
-  local class = ok and M.from_semantic(tokens, ctx) or nil
-  if class then
-    return class
-  end
-  return from_treesitter(bufnr, row, s, e, line, ctx)
+  local row, col = unpack(vim.api.nvim_win_get_cursor(0))
+  return M.target_at(bufnr, row - 1, col)
 end
 
 --- Class of the identifier under the cursor; "unknown" unless `bufnr` is the
@@ -334,11 +786,7 @@ end
 --- @param bufnr integer
 --- @return DevDocsTokenClass
 function M.cursor(bufnr)
-  if vim.api.nvim_get_current_buf() ~= bufnr then
-    return "unknown"
-  end
-  local row, col = unpack(vim.api.nvim_win_get_cursor(0))
-  return M.at(bufnr, row - 1, col)
+  return M.target(bufnr).class
 end
 
 return M

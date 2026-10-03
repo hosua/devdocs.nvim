@@ -1,6 +1,7 @@
 local classify = require "devdocs.classify"
 local config = require "devdocs.config"
 local detect = require "devdocs.detect"
+local explain = require "devdocs.explain"
 local index = require "devdocs.index"
 local lookup = require "devdocs.lookup"
 local picker = require "devdocs.ui.picker"
@@ -18,11 +19,16 @@ local HOVER = { [1] = { result = { contents = { kind = "markdown", value = "coun
 --- `hover_results` is what the hover request answers (default HOVER); `calls.hover`
 --- counts hover requests and `calls.float` the hover windows shown.
 --- `cands` is what symbols.candidates returns for the cursor (default { "count" }).
---- @param o { class?: string, cands?: string[], hover?: boolean, hover_results?: table, hits?: table[], sources?: integer, smart?: boolean, fallback?: string, decisive?: boolean }
+--- `target` (or class / kind / word / decl_line) is what classify.target returns;
+--- `explain` turns lookup.explain on (default off, so the older tests keep their
+--- expectations); `calls.explain` lists the targets the "nothing to document" popup got.
+--- @param o { class?: string, kind?: string, word?: string, decl_line?: integer, target?: table, explain?: boolean, cands?: string[], hover?: boolean, hover_results?: table, hits?: table[], sources?: integer, smart?: boolean, fallback?: string, decisive?: boolean }
 local function scenario(o, fn)
-  local calls = { classify = 0, hover = 0, float = {}, docs = 0, open = 0, pick = 0, search = {}, notify = {} }
+  local calls =
+    { classify = 0, hover = 0, float = {}, docs = 0, open = 0, pick = 0, search = {}, notify = {}, explain = {} }
   local saved = {
-    cursor = classify.cursor,
+    target = classify.target,
+    explain_show = explain.show,
     candidates = symbols.candidates,
     buffer = detect.buffer,
     order = detect.lookup_order,
@@ -38,10 +44,17 @@ local function scenario(o, fn)
     notify = vim.notify,
     search = require("devdocs").search,
   }
-  config.resolve { lookup = { smart = o.smart ~= false, fallback = o.fallback or "search" } }
-  classify.cursor = function()
+  config.resolve {
+    lookup = { smart = o.smart ~= false, fallback = o.fallback or "search", explain = o.explain == true },
+  }
+  classify.target = function()
     calls.classify = calls.classify + 1
-    return o.class or "unknown"
+    return o.target
+      or { class = o.class or "unknown", kind = o.kind, word = o.word or "count", decl_line = o.decl_line }
+  end
+  explain.show = function(t)
+    table.insert(calls.explain, t)
+    return 1000
   end
   symbols.candidates = function(_, opts)
     local t = opts and opts.text
@@ -102,7 +115,8 @@ local function scenario(o, fn)
 
   local ok, err = pcall(fn, calls)
 
-  classify.cursor = saved.cursor
+  classify.target = saved.target
+  explain.show = saved.explain_show
   symbols.candidates = saved.candidates
   detect.buffer = saved.buffer
   detect.lookup_order = saved.order
@@ -441,5 +455,223 @@ describe("lookup.can_hover", function()
     vim.lsp.get_clients = orig
     eq(false, got)
     eq({ bufnr = 7, method = "textDocument/hover" }, seen)
+  end)
+end)
+
+--- lookup.run with lookup.explain = true: `calls.explain` holds the popups shown.
+describe("lookup.run explain", function()
+  local function run(o, mode)
+    o.explain = o.explain ~= false
+    return scenario(o, function()
+      lookup.run(mode or "section")
+    end)
+  end
+
+  it("shows a popup for trivial targets and does nothing else", function()
+    for _, kind in ipairs { "string", "comment", "number", "whitespace", "operator", "punctuation" } do
+      for _, hover in ipairs { true, false } do
+        local label = kind .. " hover=" .. tostring(hover)
+        local c = run { class = "trivial", kind = kind, hover = hover, hits = { HIT } }
+        eq(1, #c.explain, label)
+        eq(kind, c.explain[1].kind, label)
+        eq(0, c.hover, label)
+        eq(0, c.docs, label)
+        eq(0, c.open, label)
+        eq({}, c.search, label)
+        eq({}, c.notify, label)
+      end
+    end
+  end)
+
+  it("shows the popup on a blank line without the nothing-to-look-up warning", function()
+    local c = run { class = "trivial", kind = "whitespace", word = "", cands = {} }
+    eq(1, #c.explain)
+    eq({}, c.notify)
+  end)
+
+  it("classifies for a variable even with no hover client, and shows the popup", function()
+    local c = run { class = "variable", kind = "local", decl_line = 2, hover = false, hits = { HIT } }
+    eq(1, c.classify)
+    eq(1, #c.explain)
+    eq(0, c.open)
+    eq(0, c.hover)
+  end)
+
+  it("hovers a variable that has hover content", function()
+    local c = run { class = "variable", kind = "local", decl_line = 2, hover = true, hits = { HIT } }
+    eq(1, #c.float)
+    eq(0, #c.explain)
+    eq(0, c.open)
+  end)
+
+  it("shows the popup for a variable whose hover is empty, never the docs", function()
+    local c = run { class = "variable", hover = true, hover_results = {}, hits = { HIT } }
+    eq(1, c.hover)
+    eq({}, c.float)
+    eq(1, #c.explain)
+    eq(0, c.open)
+    eq({}, c.search)
+  end)
+
+  it("opens the doc page for a literal the docs have an exact entry for", function()
+    local c =
+      run { class = "builtin", kind = "nil", word = "null", cands = { "null" }, hits = { hit "null" }, hover = true }
+    eq(1, c.open)
+    eq(0, #c.explain)
+    eq(0, c.hover)
+  end)
+
+  it("shows the popup for true / false the docs have no exact entry for", function()
+    local c = run { class = "builtin", kind = "boolean", word = "true", cands = { "true" }, hits = {} }
+    eq(1, #c.explain)
+    eq({}, c.search)
+    c = run {
+      class = "builtin",
+      kind = "boolean",
+      word = "true",
+      cands = { "true" },
+      hits = { hit "Boolean" },
+      decisive = false,
+    }
+    eq(1, #c.explain)
+    eq(0, c.pick)
+    eq(0, c.open)
+    eq(0, c.hover)
+  end)
+
+  it("shows the popup for a literal when no docs are installed", function()
+    local c = run { class = "builtin", kind = "nil", word = "nil", sources = 0 }
+    eq(1, #c.explain)
+    eq({}, c.notify)
+  end)
+
+  it("hovers a buffer-declared function the docs lack", function()
+    local c = run { class = "unknown", kind = "function", decl_line = 3, cands = { "helper" }, hover = true, hits = {} }
+    eq(1, #c.float)
+    eq(0, #c.explain)
+  end)
+
+  it("shows the popup for a buffer-declared function with an empty hover", function()
+    local c = run {
+      class = "unknown",
+      kind = "function",
+      decl_line = 3,
+      cands = { "helper" },
+      hover = true,
+      hover_results = {},
+      hits = {},
+    }
+    eq(1, #c.explain)
+    eq({}, c.search)
+    eq(0, c.pick)
+  end)
+
+  it("shows the popup for a buffer-declared function when no client can hover", function()
+    local c =
+      run { class = "unknown", kind = "function", decl_line = 3, cands = { "helper" }, hover = false, hits = {} }
+    eq(1, #c.explain)
+    eq({}, c.search)
+  end)
+
+  it("opens the doc page for a buffer-declared symbol with an exact entry", function()
+    local c = run { class = "symbol", kind = "function", decl_line = 1, hits = { HIT } }
+    eq(1, c.open)
+    eq(0, #c.explain)
+  end)
+
+  it("shows the popup instead of the no-docs notice for a declared symbol", function()
+    local c = run { class = "symbol", kind = "function", decl_line = 1, hover = true, hover_results = {}, sources = 0 }
+    eq(1, #c.explain)
+    eq({}, c.notify)
+  end)
+
+  describe("never shows the popup for", function()
+    it("a keyword", function()
+      local c = run { class = "keyword", cands = { "return" }, hits = { hit "return" }, hover = true }
+      eq(1, c.open)
+      eq(0, #c.explain)
+      eq(0, c.hover)
+      c = run { class = "keyword", hover = true, hits = {} }
+      eq({ "@lua~5.4 count" }, c.search)
+      eq(0, #c.explain)
+    end)
+
+    it("a builtin or library name with an exact entry", function()
+      local c = run { class = "builtin", cands = { "print" }, hits = { hit "print()" }, hover = true }
+      eq(1, c.open)
+      eq(0, #c.explain)
+      c = run {
+        class = "library",
+        cands = { "string.format", "format" },
+        hits = { hit "string.format()" },
+        hover = true,
+      }
+      eq(1, c.open)
+      eq(0, #c.explain)
+    end)
+
+    for _, class in ipairs { "unknown", "symbol", "library" } do
+      it("an undeclared " .. class .. " that hover answers (" .. class .. ")", function()
+        local c = run { class = class, cands = NVIM_API, hover = true, hits = {} }
+        eq(1, #c.float)
+        eq(0, #c.explain)
+      end)
+    end
+
+    it("an undeclared unknown with an empty hover or no client", function()
+      local c = run { class = "unknown", cands = NVIM_API, hover = true, hover_results = {}, hits = {} }
+      eq({ "@lua~5.4 nvim_create_user_command" }, c.search)
+      eq(0, #c.explain)
+      c = run { class = "unknown", hover = false, hits = {} }
+      eq(1, c.classify)
+      eq({ "@lua~5.4 count" }, c.search)
+      eq(0, #c.explain)
+    end)
+
+    it("explicit text", function()
+      local c = scenario({ class = "trivial", kind = "string", explain = true, hits = { HIT } }, function()
+        lookup.run("section", { text = "count" })
+      end)
+      eq(0, c.classify)
+      eq(0, #c.explain)
+      eq(1, c.open)
+    end)
+
+    it("lookup.smart = false", function()
+      local c = run { smart = false, class = "trivial", kind = "string", hits = { HIT } }
+      eq(0, c.classify)
+      eq(0, #c.explain)
+    end)
+  end)
+
+  describe("with lookup.explain = false", function()
+    it("treats a trivial target as unknown", function()
+      local c = run { explain = false, class = "trivial", kind = "string", hover = true, hits = {} }
+      eq(1, c.hover)
+      eq(1, #c.float)
+      eq(0, #c.explain)
+      c = run { explain = false, class = "trivial", kind = "string", hover = false, hits = {} }
+      eq(0, c.classify)
+      eq(0, #c.explain)
+    end)
+
+    it("keeps the docs for a variable whose hover is empty", function()
+      local c = run { explain = false, class = "variable", hover = true, hover_results = {}, hits = { HIT } }
+      eq(1, c.open)
+      eq(0, #c.explain)
+    end)
+  end)
+end)
+
+describe("lookup.explain config", function()
+  it("defaults to true", function()
+    eq(true, config.defaults.lookup.explain)
+  end)
+
+  it("must be a boolean and is a known key", function()
+    eq(false, (pcall(config.resolve, { lookup = { explain = "yes" } })))
+    local ok_, err = pcall(config.resolve, { lookup = { explain = false } })
+    config.resolve()
+    ok(ok_, tostring(err))
   end)
 end)

@@ -7,9 +7,15 @@
 --- (rank.exact) shows hover before fuzzy matches or the fallback.
 --- An empty hover (every client errored or said nothing) goes on as if there
 --- had been no hover.
+--- With config.lookup.explain a target with nothing to document (a string,
+--- comment, number, whitespace, operator or punctuation; true/false/nil the
+--- docs have no entry for; a variable hover has nothing on; a name declared in
+--- this buffer that neither docs nor hover know) shows a small popup
+--- (explain.lua) instead of the picker, the fallback or a wrong page.
 local classify = require "devdocs.classify"
 local config = require "devdocs.config"
 local detect = require "devdocs.detect"
+local explain = require "devdocs.explain"
 local index = require "devdocs.index"
 local manifest = require "devdocs.manifest"
 local picker = require "devdocs.ui.picker"
@@ -152,17 +158,38 @@ local function hover_or(class, bufnr, then_)
   end
 end
 
+--- The popup to show for `target`, as a function, or nil when the target is
+--- not one the popup covers: a trivial target, a variable, true/false/nil, or a
+--- name this buffer declares (decl_line and kind known).
+--- @param target DevDocsTarget
+--- @return fun()|nil
+local function note_for(target)
+  local class = target.class
+  local covered = class == "trivial"
+    or class == "variable"
+    or (class == "builtin" and (target.kind == "boolean" or target.kind == "nil"))
+    or (HOVER_UNLESS_EXACT[class] and target.decl_line ~= nil and target.kind ~= nil)
+  if not covered then
+    return nil
+  end
+  return function()
+    explain.show(target)
+  end
+end
+
 --- The doc half of a lookup: rank `cands` over the buffer's docs and open
 --- the hit, the picker, or the fallback. Without an exact entry for the name
 --- (only fuzzy, suffix or bare-word matches, or none) a doc-first class shows
---- hover instead; an empty hover goes on to those hits.
+--- hover instead; an empty hover goes on to those hits. With a `note` the
+--- popup replaces those hits, the fallback and the "no docs installed" notice.
 --- @param class DevDocsTokenClass|nil nil: never hover
-local function lookup_docs(mode, bufnr, cands, class)
+--- @param note fun()|nil
+local function lookup_docs(mode, bufnr, cands, class, note)
   local bufdocs = detect.buffer(bufnr)
   local order, tiers = detect.lookup_order(bufnr)
   local sources = index.sources(order, tiers)
   if #sources == 0 then
-    hover_or(class, bufnr, function()
+    hover_or(class, bufnr, note or function()
       no_docs(bufdocs)
     end)
     return
@@ -183,7 +210,7 @@ local function lookup_docs(mode, bufnr, cands, class)
   if rank.exact(hits, cands) then
     show()
   else
-    hover_or(class, bufnr, show)
+    hover_or(class, bufnr, note or show)
   end
 end
 
@@ -193,22 +220,40 @@ function M.run(mode, opts)
   opts = opts or {}
   local bufnr = opts.bufnr or vim.api.nvim_get_current_buf()
   local text = opts.text or M.visual_text()
+  -- An explicit selection or argument is a request for the docs; only the
+  -- cursor's own word is second-guessed. Without lookup.explain that needs a
+  -- client that can hover (without it every class ends at the docs, so
+  -- classifying is wasted); with it the popup needs no client.
+  local explicit = text ~= nil and text ~= ""
+  local lcfg = config.get().lookup
+  local explain_on = not explicit and lcfg.smart and lcfg.explain
+  local smart = not explicit and lcfg.smart and (explain_on or M.can_hover(bufnr))
+  local target = smart and classify.target(bufnr) or nil
+  local class = target and target.class or nil
+  local note = explain_on and target and note_for(target) or nil
+  if class == "trivial" then
+    if note then
+      note()
+      return
+    end
+    class = "unknown" -- lookup.explain = false: the old behaviour
+  end
   local cands = symbols.candidates(bufnr, { text = text })
   if #cands == 0 then
     notify("nothing under the cursor to look up", vim.log.levels.WARN)
     return
   end
-  -- An explicit selection or argument is a request for the docs; only the
-  -- cursor's own word is second-guessed, and only when hover is possible
-  -- (without it every class ends at the docs, so classifying is wasted).
-  local explicit = text ~= nil and text ~= ""
-  local smart = not explicit and config.get().lookup.smart and M.can_hover(bufnr)
-  local class = smart and classify.cursor(bufnr) or nil
   local function docs()
-    lookup_docs(mode, bufnr, cands, class)
+    lookup_docs(mode, bufnr, cands, class, note)
   end
-  if class == "variable" and try_hover(bufnr, docs) then
-    return
+  if class == "variable" then
+    if try_hover(bufnr, note or docs) then
+      return
+    end
+    if note then
+      note()
+      return
+    end
   end
   docs()
 end
