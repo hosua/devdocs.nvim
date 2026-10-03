@@ -214,6 +214,84 @@ describe("viewer p (whole page at the current section)", function()
     viewer.close()
   end)
 
+  it("pins the heading to the top whatever the user's 'scrolloff'", function()
+    local saved = vim.go.scrolloff
+    local before_win = vim.api.nvim_get_current_win()
+    local ok_run, err = pcall(function()
+      for _, so in ipairs { 8, 999 } do
+        vim.go.scrolloff = so
+        viewer.open { slug = slug, path = entry.path, entry = entry, mode = "section" }
+        viewer.set_mode "page"
+        eq(20, vim.api.nvim_win_get_cursor(0)[1])
+        eq(20, topline(), "scrolloff=" .. so)
+        -- window-local: the user's global value and other windows are untouched
+        eq(so, vim.go.scrolloff)
+        eq(so, vim.api.nvim_get_option_value("scrolloff", { win = before_win }))
+        viewer.close()
+      end
+    end)
+    vim.go.scrolloff = saved
+    assert(ok_run, err)
+  end)
+
+  it("puts e on the history like p, so <BS> walks back through both", function()
+    viewer.open { slug = slug, path = entry.path, entry = entry, mode = "section" }
+    viewer.set_mode "examples"
+    eq("examples", viewer.current_view().mode)
+    viewer.set_mode "page"
+    eq(20, vim.api.nvim_win_get_cursor(0)[1])
+    viewer.back()
+    eq("examples", viewer.current_view().mode)
+    viewer.back()
+    eq("section", viewer.current_view().mode)
+    eq("### assert (v [, message])", vim.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+    viewer.close()
+  end)
+
+  it("does not grow the history when the mode does not change", function()
+    viewer.open { slug = slug, path = entry.path, entry = entry, mode = "section" }
+    viewer.set_mode "page"
+    viewer.set_mode "page"
+    viewer.back()
+    eq("section", viewer.current_view().mode)
+    local notify = vim.notify
+    vim.notify = function() end
+    viewer.back() -- nothing left
+    vim.notify = notify
+    eq("section", viewer.current_view().mode)
+    viewer.close()
+  end)
+
+  it("keeps a search hit's line through e and back to p", function()
+    viewer.open { slug = slug, path = "index", entry = nil, mode = "page", line = 35 }
+    eq(35, vim.api.nvim_win_get_cursor(0)[1])
+    viewer.set_mode "examples"
+    viewer.set_mode "page"
+    eq(35, vim.api.nvim_win_get_cursor(0)[1])
+    viewer.close()
+  end)
+
+  it("restores the cursor and scroll position of a view on <BS>", function()
+    viewer.open { slug = slug, path = entry.path, entry = entry, mode = "section" }
+    viewer.set_mode "page"
+    vim.api.nvim_win_set_cursor(0, { 41, 0 })
+    local top = topline()
+    viewer.set_mode "examples"
+    viewer.back()
+    eq("page", viewer.current_view().mode)
+    eq(41, vim.api.nvim_win_get_cursor(0)[1])
+    eq(top, topline())
+    viewer.close()
+
+    viewer.open { slug = slug, path = entry.path, entry = entry, mode = "section" }
+    vim.api.nvim_win_set_cursor(0, { 3, 0 })
+    viewer.set_mode "page"
+    viewer.back()
+    eq("section", viewer.current_view().mode)
+    eq(3, vim.api.nvim_win_get_cursor(0)[1])
+    viewer.close()
+  end)
+
   it("falls back to the top of the page when the anchor is unknown", function()
     viewer.open { slug = slug, path = "index#nope", entry = nil, mode = "section" }
     viewer.set_mode "page"

@@ -19,8 +19,10 @@ local M = {}
 --- @field path string      page path with optional fragment
 --- @field entry DevDocsEntry|nil
 --- @field mode "section"|"page"|"examples"
---- @field line integer|nil       line of the page to put the cursor on
+--- @field line integer|nil       line of the shown text to put the cursor on
 --- @field top boolean|nil         also scroll that line to the top of the window
+--- @field topline integer|nil     first visible line to restore (history entries)
+--- @field page_at integer|nil     page line to return to on p from e (no fragment)
 --- @field view_mode "float"|"split"|"vsplit"|"tab"|nil  window kind override
 
 M.FOOTER = "o browser  y url  ⏎ follow  ⌫ back  e examples  p page  s search  ? help  q close"
@@ -190,19 +192,46 @@ function M.parse_devdocs_url(url)
   return nil
 end
 
---- Cursor on view.line (clamped), and with view.top that line at the top of
---- the window like `zt`.
+--- Cursor on view.line (clamped); with view.topline the scroll position a
+--- history entry saved, else with view.top that line at the top of the
+--- window like `zt` (the viewer window has 'scrolloff' 0, so it really is
+--- the top).
 local function place_cursor(win, view, count)
   local line = math.max(1, math.min(view.line or 1, count))
   pcall(vim.api.nvim_win_set_cursor, win, { line, 0 })
-  if view.top then
+  if view.topline then
+    vim.api.nvim_win_call(win, function()
+      vim.fn.winrestview { lnum = line, col = 0, topline = math.max(1, math.min(view.topline, line)) }
+    end)
+  elseif view.top then
     vim.api.nvim_win_call(win, function()
       vim.cmd "normal! zt"
     end)
   end
 end
 
-local function show(view, push_history)
+--- The current view with the cursor line and scroll position it has now, for
+--- the history, so <BS> returns to the same place. A copy; the view is not
+--- changed.
+--- @return DevDocsView
+local function snapshot()
+  local view = current.view
+  if not current.float:valid() then
+    return view
+  end
+  local win = current.float.win
+  local cursor = vim.api.nvim_win_get_cursor(win)
+  local top = vim.api.nvim_win_call(win, function()
+    return vim.fn.winsaveview().topline
+  end)
+  return vim.tbl_extend("force", view, { line = cursor[1], topline = top, top = false })
+end
+
+local function push_history()
+  current.history[#current.history + 1] = snapshot()
+end
+
+local function show(view, push)
   local lines, title, err = M.render(view)
   if err then
     notify(err, vim.log.levels.WARN)
@@ -212,8 +241,8 @@ local function show(view, push_history)
   end
   local display, links = M.display(lines)
   if current and current.float:valid() then
-    if push_history then
-      current.history[#current.history + 1] = current.view
+    if push then
+      push_history()
     end
     current.view = view
     current.links = links
@@ -267,6 +296,9 @@ local function show(view, push_history)
     }
     current = self
     self.links = links
+    -- 'scrolloff' would push a `zt` heading down (or center it with 999);
+    -- window-local, so the user's other windows keep theirs
+    vim.wo[self.float.win].scrolloff = 0
     apply_links(self.float.buf, links)
     if view.line then
       place_cursor(self.float.win, view, #lines)
@@ -302,26 +334,30 @@ function M.current_view()
   return current and current.view or nil
 end
 
---- Switch the current view to another mode. Into "page" from a section, its
---- examples or the help screen, the page opens at that section's heading;
---- the section view goes on the history (help already put it there), so
---- <BS> returns to it.
+--- Switch the current view to another mode (e and p). Into "page" from a
+--- section, its examples or the help screen, the page opens at that
+--- section's heading; a page without a fragment (a search hit) opens at the
+--- line it was left at. The view switched from goes on the history (help
+--- already put its view there), so <BS> walks back through e and p alike.
 --- @param mode "section"|"page"|"examples"
 function M.set_mode(mode)
-  if not current then
+  if not current or current.view.mode == mode then
     return
   end
   local from = current.view
-  local v = vim.tbl_extend("force", from, { mode = mode })
-  local push = false
+  local v = vim.tbl_extend("force", from, { mode = mode, topline = nil })
   if mode ~= "page" then
-    -- view.line is a page line; it means nothing in a section or examples
+    -- view.line is a line of the page; remember it for the way back to p
+    if from.mode == "page" and current.float:valid() then
+      v.page_at = vim.api.nvim_win_get_cursor(current.float.win)[1]
+    end
     v.line, v.top = nil, nil
-  elseif from.mode ~= "page" then
+  elseif from.path:find("#", 1, true) then
     v.line, v.top = M.page_line(from), true
-    push = from.mode ~= "help"
+  else
+    v.line, v.top = from.page_at or (from.mode == "help" and from.line) or 1, nil
   end
-  show(v, push)
+  show(v, from.mode ~= "help")
 end
 
 function M.browser()
@@ -390,7 +426,7 @@ function M.help()
     return
   end
   local v = vim.tbl_extend("force", current.view, { mode = "help" })
-  current.history[#current.history + 1] = current.view
+  push_history()
   current.view = v
   current.links = {}
   current.float:set_lines(M.HELP)

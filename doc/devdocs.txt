@@ -125,8 +125,10 @@ files' mtimes once per session). See :DevDocs detect and :DevDocs resync.
   p           the whole page       s   search inside this doc
   ?           help
 
-  `p` opens the whole page scrolled to the section being shown; `<BS>`
-  returns to the section.
+  `p` opens the whole page with the section being shown at the top of
+  the window (whatever 'scrolloff' is); `<BS>` returns to the section.
+  `e` and `p` both go on the history, and `<BS>` puts the cursor back
+  where it was in each view.
 
 ==============================================================================
 5. MANAGER KEYS                                               *devdocs-manager*
