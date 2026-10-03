@@ -70,6 +70,8 @@ local function draw()
   if #r.rows > 0 then
     pcall(vim.api.nvim_win_set_cursor, ui.float.win, { math.min(render.cursor_line(ui.state), #r.lines), 0 })
   end
+  -- pending marks are unsaved changes, oil.nvim style: :w applies them
+  vim.bo[ui.float.buf].modified = selection.count(ui.state.marked) > 0
 end
 
 local function dispatch(action)
@@ -144,6 +146,10 @@ local function do_install(row, force)
     notify(row.slug .. " is already installing")
     return
   end
+  -- installed by hand: an install mark on it would turn into an uninstall
+  if not row.meta then
+    dispatch { type = "unmark", slugs = { row.slug } }
+  end
   installer.install(row.slug, { force = force, doc = row.doc }, function(ok, err)
     if not ok then
       notify(("%s: %s"):format(row.slug, err), vim.log.levels.ERROR)
@@ -176,6 +182,20 @@ local function do_update(row)
   refresh_data()
 end
 
+--- installer.uninstall_many, plus the slugs it did delete.
+--- @return integer n, string[] errors, string[] deleted
+local function uninstall(slugs)
+  local n, errors = installer.uninstall_many(slugs)
+  local failed = {}
+  for _, e in ipairs(errors) do
+    failed[e:match "^(.-): " or e] = true
+  end
+  local deleted = vim.tbl_filter(function(s)
+    return not failed[s]
+  end, slugs)
+  return n, errors, deleted
+end
+
 --- Every delete in the manager goes through here: one confirm that lists
 --- every slug, the disk space it frees and the docs dir (plus `notes`), then
 --- installer.uninstall_many. Marks of deleted docs drop out on the refresh.
@@ -193,13 +213,24 @@ local function do_uninstall_many(slugs, notes)
   if not float.confirm(msg) then
     return
   end
-  local n, errors = installer.uninstall_many(present)
+  local n, errors, deleted = uninstall(present)
   if #errors > 0 then
     notify(("deleted %d, failed %d: %s"):format(n, #errors, table.concat(errors, "; ")), vim.log.levels.WARN)
   else
     notify(("deleted %d doc%s"):format(n, n == 1 and "" or "s"))
   end
+  -- a mark on a doc that is not installed means "install it": drop them
+  dispatch { type = "unmark", slugs = deleted }
   refresh_data()
+end
+
+local function hidden_note(slugs)
+  local hidden = selection.hidden(slugs, model.rows(ui.state))
+  if #hidden == 0 then
+    return nil
+  end
+  local why = ui.state.filter ~= "" and (" (filter: %s)"):format(ui.state.filter) or ""
+  return ("%d of them %s not shown in the current view%s"):format(#hidden, #hidden == 1 and "is" or "are", why)
 end
 
 --- The row under the cursor, whatever its kind (group headers included).
@@ -207,19 +238,30 @@ local function cursor_row()
   return ui and model.rows(ui.state)[ui.state.cursor] or nil
 end
 
---- X: the marked docs when there are marks (the confirm says how many of
---- them the current view hides), else the row under the cursor: a version,
+--- X: the marked installed docs when there are marks (the confirm says how
+--- many of them the current view hides, and how many marks it ignores
+--- because they are installs), else the row under the cursor: a version,
 --- or a language's installed versions that the filter shows.
 local function do_uninstall_selection()
   local marked = selection.targets(ui.state.marked)
   if #marked > 0 then
-    local hidden = selection.hidden(marked, model.rows(ui.state))
-    local notes = nil
-    if #hidden > 0 then
-      local why = ui.state.filter ~= "" and (" (filter: %s)"):format(ui.state.filter) or ""
-      notes = { ("%d of them %s not shown in the current view%s"):format(#hidden, #hidden == 1 and "is" or "are", why) }
+    local installed = vim.tbl_filter(function(s)
+      return ui.state.installed[s] ~= nil
+    end, marked)
+    local skipped = #marked - #installed
+    if #installed == 0 then
+      notify(("no marked doc is installed (%d marked to install); use :w or S to apply installs"):format(skipped))
+      return
     end
-    do_uninstall_many(marked, notes)
+    local notes = {}
+    notes[#notes + 1] = hidden_note(installed)
+    if skipped > 0 then
+      notes[#notes + 1] = ("%d marked doc%s not installed, ignored here; use :w or S to apply installs"):format(
+        skipped,
+        skipped == 1 and " is" or "s are"
+      )
+    end
+    do_uninstall_many(installed, notes)
     return
   end
   local row = current_row()
@@ -272,6 +314,113 @@ local function do_update_all()
     refresh_data()
   end)
   refresh_data()
+end
+
+--- Disk each planned doc takes: an install its download size (manifest
+--- db_size), an uninstall what it uses on disk (du), else its meta.db_size.
+local function plan_sizes(plan, by_slug)
+  local sizes = {}
+  for _, e in ipairs(plan.install) do
+    sizes[e.slug] = by_slug[e.slug] and by_slug[e.slug].db_size or nil
+  end
+  for _, e in ipairs(plan.uninstall) do
+    local meta = ui.state.installed[e.slug]
+    sizes[e.slug] = installer.disk_usage { e.slug } or (type(meta) == "table" and meta.db_size or nil)
+  end
+  return sizes
+end
+
+local function slugs_of(entries)
+  return vim.tbl_map(function(e)
+    return e.slug
+  end, entries)
+end
+
+--- :w / S: apply the marks (selection.plan) after a menu that lists the
+--- installs (disk taken) and uninstalls (disk freed). Uninstalls run now,
+--- installs in the background; applied marks clear, failed ones stay.
+--- @return boolean false when the menu was cancelled (the marks stay pending)
+local function do_apply()
+  if not ui then
+    return true
+  end
+  local by_slug = manifest.by_slug(ui.state.docs)
+  local plan = selection.plan(ui.state.marked, ui.state.installed, by_slug)
+  if #plan.install + #plan.uninstall == 0 then
+    if #plan.unknown > 0 then
+      notify(
+        ("not in the docs list, can not install: %s"):format(table.concat(plan.unknown, ", ")),
+        vim.log.levels.WARN
+      )
+    else
+      notify "nothing marked"
+    end
+    return true
+  end
+  local notes = {}
+  local all = vim.list_extend(slugs_of(plan.install), slugs_of(plan.uninstall))
+  notes[#notes + 1] = hidden_note(all)
+  if #plan.unknown > 0 then
+    notes[#notes + 1] = ("not in the docs list, skipped: %s"):format(table.concat(plan.unknown, ", "))
+  end
+  local width = math.max(30, math.min(76, vim.o.columns - 4))
+  local lines, spans = render.plan_lines(plan, plan_sizes(plan, by_slug), width, notes)
+  local list_win = ui.float.win
+  -- one spare column so the totals do not touch the right border
+  local yes = float.choose { lines = lines, spans = spans, title = "Apply changes", width = width + 1 }
+  if vim.api.nvim_win_is_valid(list_win) then
+    pcall(vim.api.nvim_set_current_win, list_win)
+  end
+  if not yes or not ui then
+    return false
+  end
+
+  local installs, msgs = slugs_of(plan.install), {}
+  local n, errors, deleted = 0, {}, {}
+  if #plan.uninstall > 0 then
+    n, errors, deleted = uninstall(slugs_of(plan.uninstall))
+  end
+  dispatch { type = "unmark", slugs = vim.list_extend(vim.deepcopy(installs), deleted) }
+  if #installs > 0 then
+    msgs[#msgs + 1] = ("installing %d doc%s"):format(#installs, #installs == 1 and "" or "s")
+    installer.install_many(installs, { docs = by_slug }, function(summary)
+      local bad = vim.tbl_keys(summary.errors)
+      table.sort(bad)
+      if #bad > 0 then
+        local why = vim.tbl_map(function(s)
+          return ("%s: %s"):format(s, summary.errors[s])
+        end, bad)
+        notify(
+          ("installed %d, failed %d (still marked): %s"):format(summary.ok, #bad, table.concat(why, "; ")),
+          vim.log.levels.WARN
+        )
+        if ui then
+          dispatch { type = "mark_slugs", slugs = bad }
+        end
+      else
+        notify(("installed %d doc%s"):format(summary.ok, summary.ok == 1 and "" or "s"))
+      end
+      refresh_data()
+    end)
+  end
+  if #plan.uninstall > 0 then
+    msgs[#msgs + 1] = ("deleted %d doc%s"):format(n, n == 1 and "" or "s")
+  end
+  if #errors > 0 then
+    msgs[#msgs + 1] = ("failed %d (still marked): %s"):format(#errors, table.concat(errors, "; "))
+  end
+  notify(table.concat(msgs, ", "), #errors > 0 and vim.log.levels.WARN or nil)
+  refresh_data()
+  return true
+end
+
+--- do_apply, then 'modified' says whether marks are still pending (failed
+--- or unknown ones): `:wq` closes the list only when nothing is left.
+local function apply_marks()
+  local done = do_apply()
+  if ui and ui.float:valid() then
+    vim.bo[ui.float.buf].modified = not done or selection.count(ui.state.marked) > 0
+  end
 end
 
 local function do_toggle_enabled(row)
@@ -475,6 +624,9 @@ function M.open()
     M = function()
       dispatch { type = "unmark_all" }
     end,
+    S = function()
+      apply_marks()
+    end,
     D = function()
       local row = cursor_row()
       if row and row.base then
@@ -536,6 +688,20 @@ function M.open()
     end,
   }
   vim.wo[f.win].cursorline = true
+  -- :w applies the marks (oil.nvim style); :wq / :x apply, then close. A
+  -- cancelled menu leaves the buffer modified, so :wq does not close it.
+  vim.bo[f.buf].buftype = "acwrite"
+  vim.api.nvim_create_autocmd("BufWriteCmd", {
+    buffer = f.buf,
+    callback = function(ev)
+      -- `:w other.txt` is not a request to apply the marks
+      if ev.match ~= vim.api.nvim_buf_get_name(f.buf) then
+        notify "the list can not be written to a file; :w applies the marks"
+        return
+      end
+      apply_marks()
+    end,
+  })
   -- visual-line selections: m marks the range, X / d deletes it
   local function vmap(lhs, fn)
     vim.keymap.set("x", lhs, fn, { buffer = f.buf, nowait = true, silent = true })

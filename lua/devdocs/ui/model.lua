@@ -434,7 +434,7 @@ function M.reduce(state, action)
   if t == "data" then
     local s = vim.tbl_extend("force", vim.deepcopy(state), action.data)
     if s.marked then
-      s.marked = selection.cleanup(s.marked, s.installed)
+      s.marked = selection.cleanup(s.marked, s.installed, s.docs)
     end
     return clamp(s, M.rows(s))
   end
@@ -493,7 +493,15 @@ function M.reduce(state, action)
   elseif t == "unmark_all" then
     return vim.tbl_extend("force", vim.deepcopy(state), { marked = {} })
   elseif t == "marked_cleanup" then
-    return vim.tbl_extend("force", vim.deepcopy(state), { marked = selection.cleanup(state.marked, state.installed) })
+    return vim.tbl_extend(
+      "force",
+      vim.deepcopy(state),
+      { marked = selection.cleanup(state.marked, state.installed, state.docs) }
+    )
+  elseif t == "mark_slugs" then
+    return vim.tbl_extend("force", vim.deepcopy(state), { marked = selection.mark(state.marked, action.slugs) })
+  elseif t == "unmark" then
+    return vim.tbl_extend("force", vim.deepcopy(state), { marked = selection.unmark(state.marked, action.slugs) })
   end
   return state
 end

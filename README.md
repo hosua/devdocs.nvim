@@ -136,8 +136,9 @@ has. The columns:
 | `}` / `{` | next / previous section |
 | `<Tab>`, `l`, `h` | expand / collapse a language's versions (`h` on a version folds it) |
 | `i` | install the version under the cursor; on a language, its installed current version or the newest |
-| `X` | uninstall (asks); on a language, every installed version the filter shows; with marks, every marked doc, including marks the filter hides (one question listing them, the space freed and how many are not shown) |
-| `m` | mark / unmark the doc under the cursor (on a language: its installed versions the filter shows) and move down. Marks survive filter changes; the status line shows `N marked` |
+| `X` | uninstall (asks); on a language, every installed version the filter shows; with marks, every marked installed doc, including marks the filter hides (one question listing them, the space freed and how many are not shown). Marks on docs that are not installed are left alone: `:w` / `S` installs them |
+| `m` | mark / unmark the doc under the cursor, installed or not, and move down. On a language: its installed versions the filter shows, or its newest version when none is installed (expand it to mark an older one). A version that is installing can not be marked. Marks survive filter changes; the status line shows `N marked` and the buffer shows as modified (`[+]`) |
+| `:w`, `S` | apply the marks: install every marked doc that is not installed and uninstall every marked one that is. A menu in the middle of the screen lists both groups first: `Install (N)` with the disk the downloads take (`-12.3 MB`, red, `DevDocsCost`) and `Uninstall (N)` with the disk they free (`+45.6 MB`, green, `DevDocsFreed`), plus how many marks the filter hides; `y`/`<CR>` applies, `n`/`q`/`<Esc>` cancels. Applied marks clear; marks whose install or uninstall failed stay. `:wq` / `:x` apply and then close the list (a cancelled menu keeps it open). With marks pending, `:q` refuses (E37) like any modified buffer; `q` / `<Esc>` close anyway and drop the marks |
 | `V`/`v` … `m` | mark every doc in the visual selection (again: unmark) |
 | `V`/`v` … `X` or `d` | uninstall the installed docs in the visual selection (asks) |
 | `M` | clear every mark |
@@ -403,6 +404,8 @@ All `default = true` links; override them in your colorscheme.
 | `DevDocsKey` | `Special` |
 | `DevDocsLink` | `Underlined` |
 | `DevDocsMark` | `DiagnosticHint` |
+| `DevDocsCost` | `DiagnosticError` |
+| `DevDocsFreed` | `DiagnosticOk` |
 
 ## Hooks and API
 

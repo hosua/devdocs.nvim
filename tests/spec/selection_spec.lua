@@ -47,10 +47,32 @@ describe("selection.toggle", function()
     eq({ css = true }, m1)
   end)
 
-  it("ignores not-installed doc rows, group rows and nil", function()
-    eq({}, selection.toggle({}, drow("rust", false)))
+  it("marks and unmarks a doc row that is not installed (to install it)", function()
+    local m1 = selection.toggle({}, drow("rust", false))
+    eq({ rust = true }, m1)
+    eq({}, selection.toggle(m1, drow("rust", false)))
+  end)
+
+  it("ignores installing doc rows, group rows and nil", function()
+    eq({}, selection.toggle({}, drow("rust", false, { status = "installing" })))
     eq({}, selection.toggle({}, { kind = "group", label = "Installed", count = 1 }))
     eq({ a = true }, selection.toggle({ a = true }, nil))
+  end)
+
+  it("a lang row with nothing installed marks its newest version, again unmarks it", function()
+    local lua = lrow("lua", { drow("lua~5.4", false), drow("lua~5.1", false) })
+    local m1 = selection.toggle({}, lua)
+    eq({ ["lua~5.4"] = true }, m1)
+    eq({}, selection.toggle(m1, lua))
+    -- under a filter: the newest version the filter shows
+    local f = vim.tbl_extend("force", lua, { visible = { lua.children[2] } })
+    eq({ ["lua~5.1"] = true }, selection.toggle({}, f))
+    -- an installed version that is reinstalling is not markable either
+    local py = lrow("python", { drow("python~3.12", true, { status = "installing" }), drow("python~3.11", true) })
+    eq({ ["python~3.11"] = true }, selection.toggle({}, py))
+    -- an installing newest version is not markable
+    local busy = lrow("lua", { drow("lua~5.4", false, { status = "installing" }) })
+    eq({}, selection.toggle({}, busy))
   end)
 
   it("a lang row marks every installed child, or unmarks them when all are marked", function()
@@ -82,12 +104,16 @@ describe("selection.mark_range / range_targets", function()
     eq({}, selection.range_targets(ROWS, -3, 0))
   end)
 
-  it("marks every installed row in the range", function()
-    eq({ css = true, ["python~3.11"] = true, x = true }, selection.mark_range({ x = true }, ROWS, 4, 7))
+  it("marks every doc row in the range, installed or not", function()
+    eq(
+      { css = true, ["python~3.11"] = true, ["python~3.9"] = true, x = true },
+      selection.mark_range({ x = true }, ROWS, 4, 7)
+    )
+    eq({ rust = true }, selection.mark_range({}, ROWS, 7, 8))
   end)
 
   it("unmarks the range when everything in it is already marked", function()
-    local all = { css = true, ["python~3.11"] = true, ["python~3.12"] = true }
+    local all = { css = true, ["python~3.11"] = true, ["python~3.12"] = true, ["python~3.9"] = true }
     eq({ ["python~3.12"] = true }, selection.mark_range(all, ROWS, 4, 6))
   end)
 
@@ -104,9 +130,27 @@ describe("selection.targets / cleanup / count", function()
     eq({}, selection.targets(nil))
   end)
 
-  it("cleanup drops marks for slugs that are no longer installed", function()
-    eq({ a = true }, selection.cleanup({ a = true, b = true }, { a = {}, c = {} }))
-    eq({}, selection.cleanup(nil, { a = {} }))
+  it("cleanup drops marks for slugs neither installed nor in the docs list", function()
+    local docs = { { slug = "b" }, { slug = "c" } }
+    eq({ a = true, b = true }, selection.cleanup({ a = true, b = true, gone = true }, { a = {} }, docs))
+    eq({}, selection.cleanup(nil, { a = {} }, docs))
+    -- no docs list yet (still loading): nothing can be said to be gone
+    eq({ a = true, gone = true }, selection.cleanup({ a = true, gone = true }, { a = {} }, {}))
+    eq({ a = true, gone = true }, selection.cleanup({ a = true, gone = true }, { a = {} }, nil))
+  end)
+
+  it("mark sets the given slugs and keeps the rest", function()
+    local m = { a = true }
+    eq({ a = true, b = true }, selection.mark(m, { "b", "a" }))
+    eq({ a = true }, m)
+    eq({ b = true }, selection.mark(nil, { "b" }))
+  end)
+
+  it("unmark drops the given slugs and keeps the rest", function()
+    local m = { a = true, b = true, c = true }
+    eq({ b = true }, selection.unmark(m, { "a", "c", "zz" }))
+    eq({ a = true, b = true, c = true }, m)
+    eq({}, selection.unmark(nil, { "a" }))
   end)
 
   it("count", function()
@@ -344,5 +388,55 @@ describe("selection.confirm_message notes", function()
     local note = selection.prune_note({ "python~3.9" }, { ["python~3.9"] = { "/work/app", "/work/b" } })
     eq("kept (pinned by project /work/app, /work/b): python~3.9", note)
     eq(nil, selection.prune_note({}, {}))
+  end)
+end)
+
+describe("selection.plan", function()
+  local DOCS = {
+    python = nil,
+    ["python~3.13"] = { slug = "python~3.13", name = "Python", version = "3.13", db_size = 100 },
+    ["python~3.12"] = { slug = "python~3.12", name = "Python", version = "3.12", db_size = 90 },
+    node = { slug = "node", name = "Node.js", version = "", release = "24.1.0", db_size = 50 },
+    css = { slug = "css", name = "CSS", version = "", db_size = 10 },
+  }
+  local INSTALLED = { ["python~3.12"] = { name = "Python", doc_version = "3.12" }, css = { name = "CSS" } }
+
+  it("installs marked docs that are not installed and uninstalls marked installed ones", function()
+    local p = selection.plan({ ["python~3.13"] = true, node = true, ["python~3.12"] = true }, INSTALLED, DOCS)
+    eq(
+      { "node", "python~3.13" },
+      vim.tbl_map(function(e)
+        return e.slug
+      end, p.install)
+    )
+    eq(
+      { "python~3.12" },
+      vim.tbl_map(function(e)
+        return e.slug
+      end, p.uninstall)
+    )
+    eq({ slug = "node", name = "Node.js", version = "24.1.0 (current)" }, p.install[1])
+    eq({ slug = "python~3.13", name = "Python", version = "3.13" }, p.install[2])
+    eq({ slug = "python~3.12", name = "Python", version = "3.12" }, p.uninstall[1])
+    eq({}, p.unknown)
+  end)
+
+  it("an unversioned installed doc without manifest info still gets a label", function()
+    local p = selection.plan({ css = true }, INSTALLED, {})
+    eq({ { slug = "css", name = "CSS", version = "" } }, p.uninstall)
+  end)
+
+  it("reports marks it can not install (not installed, not in the docs list)", function()
+    local p = selection.plan({ gone = true, css = true }, INSTALLED, DOCS)
+    eq({}, p.install)
+    eq({ "gone" }, p.unknown)
+  end)
+
+  it("is empty for no marks and does not mutate its inputs", function()
+    local p = selection.plan(nil, INSTALLED, DOCS)
+    eq({ install = {}, uninstall = {}, unknown = {} }, p)
+    local marked = { css = true }
+    selection.plan(marked, INSTALLED, DOCS)
+    eq({ css = true }, marked)
   end)
 end)

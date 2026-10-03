@@ -160,9 +160,10 @@ function M.released(state, row)
   return ""
 end
 
---- Mark column: ● marked; on a language ● when every installed version the
---- filter shows (or every shown version, if none is installed) is marked,
---- ◐ when only some of its versions are.
+--- Mark column: ● marked (installed or not); on a language ● when every
+--- version `m` on it would mark is marked (selection.mark_slugs: its shown
+--- installed versions, else its newest shown one), ◐ when only some of its
+--- versions are.
 --- @param state DevDocsListState
 --- @param row DevDocsListRow
 --- @return string
@@ -171,19 +172,13 @@ function M.mark(state, row)
   if row.kind ~= "lang" then
     return marked[row.slug] and "●" or ""
   end
-  local shown = row.visible or row.children
-  local pool = vim.tbl_filter(function(c)
-    return c.meta ~= nil
-  end, shown)
-  if #pool == 0 then
-    pool = shown
-  end
+  local pool = selection.mark_slugs(row)
   local n, any = 0, false
   for _, c in ipairs(row.children) do
     any = any or marked[c.slug] == true
   end
-  for _, c in ipairs(pool) do
-    n = n + (marked[c.slug] and 1 or 0)
+  for _, slug in ipairs(pool) do
+    n = n + (marked[slug] and 1 or 0)
   end
   if n > 0 and n == #pool then
     return "●"
@@ -351,7 +346,7 @@ function M.render(state)
     spans[#spans + 1] = { row = 1, col_start = marks_at, col_end = #left, hl = "DevDocsMark" }
   end
   lines[2] = M.cell(
-    " i install  X delete  m/M mark/clear  D prune  u update  e enable  ⏎ open  Tab/l/h versions  / filter  ? help  q",
+    " i install  X delete  m/M mark/clear  S/:w apply  D prune  u update  e enable  ⏎ open  Tab versions  / filter  ? help",
     width
   )
   spans[#spans + 1] = { row = 2, col_start = 0, col_end = #lines[2], hl = "DevDocsDim" }
@@ -425,6 +420,101 @@ function M.visual_range(state, nrows, a, b)
   return M.line_to_row(state, nrows, math.max(a, first)), M.line_to_row(state, nrows, math.max(b, first))
 end
 
+-- ---------------------------------------------------------------- plan menu
+
+M.PLAN_FOOTER = " y/⏎ apply   n/q/Esc cancel"
+
+local function signed(sign, bytes)
+  local s = M.size(bytes)
+  return sign .. (s ~= "" and s or "0 kB")
+end
+
+local function wrap(text, width)
+  local out, line = {}, ""
+  for word in text:gmatch "%S+" do
+    if line ~= "" and vim.fn.strdisplaywidth(line .. " " .. word) > width then
+      out[#out + 1] = line
+      line = "   " .. word
+    else
+      line = line == "" and (" " .. word) or (line .. " " .. word)
+    end
+  end
+  if line ~= "" then
+    out[#out + 1] = line
+  end
+  return out
+end
+
+--- Lines and highlight spans of the apply-marks menu (:w / S): an
+--- "Install (N)" group with the disk it takes ("-12.3 MB", DevDocsCost) and
+--- an "Uninstall (N)" group with the disk it frees ("+45.6 MB",
+--- DevDocsFreed), one line per doc (slug, name and version, size; "?" when
+--- unknown), an empty group left out; then `notes` and the key footer.
+--- Every line is at most `width` display cells. Pure.
+--- @param plan { install: table[], uninstall: table[] } selection.plan()
+--- @param sizes table<string, number> slug -> bytes
+--- @param width integer
+--- @param notes string[]|nil
+--- @return string[] lines, table[] spans { row, col_start, col_end, hl }
+function M.plan_lines(plan, sizes, width, notes)
+  sizes = sizes or {}
+  local lines, spans = {}, {}
+  local size_w = 9
+  local rest = math.max(8, width - 3 - size_w - 2)
+  local slug_w = 0
+  for _, group in ipairs { plan.install or {}, plan.uninstall or {} } do
+    for _, e in ipairs(group) do
+      slug_w = math.max(slug_w, vim.fn.strdisplaywidth(e.slug))
+    end
+  end
+  slug_w = math.min(slug_w, math.floor(rest / 2))
+  local label_w = rest - slug_w
+
+  local function group(label, entries, sign, hl)
+    if #entries == 0 then
+      return
+    end
+    local total = 0
+    for _, e in ipairs(entries) do
+      total = total + (sizes[e.slug] or 0)
+    end
+    local left = (" %s (%d)"):format(label, #entries)
+    local right = signed(sign, total)
+    local pad = math.max(1, width - vim.fn.strdisplaywidth(left) - vim.fn.strdisplaywidth(right))
+    if #lines > 0 then
+      lines[#lines + 1] = ""
+    end
+    local line = left .. string.rep(" ", pad) .. right
+    lines[#lines + 1] = line
+    spans[#spans + 1] = { row = #lines, col_start = 1, col_end = #left, hl = "DevDocsHeader" }
+    spans[#spans + 1] = { row = #lines, col_start = #line - #right, col_end = #line, hl = hl }
+    for _, e in ipairs(entries) do
+      local name = e.version ~= "" and (e.name .. " " .. e.version) or e.name
+      local sz = M.size(sizes[e.slug])
+      sz = sz ~= "" and sz or "?"
+      local item = "   " .. M.cell(e.slug, slug_w) .. " " .. M.cell(name, label_w) .. " "
+      item = item .. string.rep(" ", size_w - vim.fn.strdisplaywidth(sz)) .. sz
+      lines[#lines + 1] = item
+      spans[#spans + 1] = { row = #lines, col_start = #item - #sz, col_end = #item, hl = "DevDocsDim" }
+    end
+  end
+  group("Install", plan.install or {}, "-", "DevDocsCost")
+  group("Uninstall", plan.uninstall or {}, "+", "DevDocsFreed")
+  if notes and #notes > 0 then
+    lines[#lines + 1] = ""
+    for _, n in ipairs(notes) do
+      for _, l in ipairs(wrap(n, width)) do
+        lines[#lines + 1] = l
+        spans[#spans + 1] = { row = #lines, col_start = 0, col_end = #l, hl = "DevDocsOutdated" }
+      end
+    end
+  end
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = M.PLAN_FOOTER
+  spans[#spans + 1] = { row = #lines, col_start = 0, col_end = #M.PLAN_FOOTER, hl = "DevDocsDim" }
+  return lines, spans
+end
+
 M.HELP = {
   "DevDocs manager keys",
   "",
@@ -444,11 +534,16 @@ M.HELP = {
   "  r            refresh the docs list from devdocs.io",
   "  A            install every doc (asks first)",
   "",
-  "  m            mark / unmark the doc (or the shown versions of a language)",
+  "  m            mark / unmark the doc, installed or not (a language: its",
+  "               shown installed versions, else its newest version)",
   "  V … m        mark every doc in a visual selection (again: unmark)",
   "  M            clear every mark; the status line shows how many are marked",
-  "  X            with marks: delete every marked doc (asks first, lists them",
-  "               and says how many the filter hides; marks outlive filters)",
+  "  S, :w        apply the marks: install the marked docs that are not",
+  "               installed, uninstall the installed ones (a menu lists both",
+  "               with the disk used / freed; y or ⏎ applies, n/q/Esc cancels)",
+  "  X            with marks: delete every marked installed doc (asks first,",
+  "               lists them and says how many the filter hides; marks",
+  "               outlive filters; marks on docs not installed are ignored)",
   "  V … X, V … d delete the installed docs in a visual selection (asks first)",
   "  D            prune this language: keep its newest enabled installed",
   "               version and any version a project pins, delete the rest",

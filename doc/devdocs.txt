@@ -152,6 +152,7 @@ files' mtimes once per session). See :DevDocs detect and :DevDocs resync.
   <CR>        open in the viewer   o   open on devdocs.io
   /           live filter          s   sort by name / size
   r           refresh the list     A   install every doc (asks)
+  m M         mark / clear marks   S :w  apply marks (install + uninstall)
   ?           help                 q   close
 
 One row per language; ▸ expands it into its versions. On a language row, i
@@ -162,19 +163,32 @@ Columns: Version
 versions), Released (upstream release date, see |devdocs-list|; "≈" marks a
 DevDocs build date used when none is known), Pages, Notes.
 
-  Marking and bulk delete (every delete asks once and lists what goes):
-  m           mark / unmark, move down (a language row: its installed
-              versions the filter shows)
+  Marking, applying and bulk delete (every delete asks once and lists what
+  goes):
+  m           mark / unmark, installed or not, move down (a language row:
+              its installed versions the filter shows, else its newest
+              version; expand it to mark an older one). Installing
+              versions can not be marked.
   V v ... m   mark the visual selection (again: unmark)
   M           clear every mark
-  X           with marks: uninstall every marked doc (the confirm says how
-              many of them the current view does not show)
+  :w  S       apply the marks: install the marked docs that are not
+              installed, uninstall the marked installed ones. A centered
+              menu lists "Install (N)" with the disk the downloads take
+              ("-12.3 MB", DevDocsCost, red) and "Uninstall (N)" with the
+              disk freed ("+45.6 MB", DevDocsFreed, green) and how many
+              marks the filter hides. y or <CR> applies, n q <Esc>
+              cancels. Applied marks clear, failed ones stay. :wq and :x
+              apply, then close the list (not when the menu is cancelled).
+  X           with marks: uninstall every marked installed doc (the confirm
+              says how many of them the current view does not show; marks
+              on docs that are not installed are ignored, :w installs them)
   V v ... X d uninstall the installed docs in the visual selection
   D           prune this language (the |:DevDocs| prune keep rule)
   gD          the same for every language (= :DevDocs prune)
 
   Marks survive filter changes; the status line shows "N marked" while any
-  exist.
+  exist and the list buffer is 'modified', so :q refuses (E37) until they
+  are applied or cleared; q and <Esc> close the list anyway.
 
 ==============================================================================
 6. DATA ON DISK                                                  *devdocs-data*
@@ -205,6 +219,7 @@ than the plugin knows are never overwritten.
   DevDocsOutdated DiagnosticWarn   DevDocsError DiagnosticError
   DevDocsProgress DiagnosticInfo   DevDocsKey Special
   DevDocsLink Underlined           DevDocsMark DiagnosticHint
+  DevDocsCost DiagnosticError      DevDocsFreed DiagnosticOk
 
 ==============================================================================
 8. HEALTH                                                      *devdocs-health*

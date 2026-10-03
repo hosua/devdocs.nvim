@@ -22,6 +22,8 @@ M.HIGHLIGHTS = {
   DevDocsKey = "Special",
   DevDocsLink = "Underlined",
   DevDocsMark = "DiagnosticHint",
+  DevDocsCost = "DiagnosticError",
+  DevDocsFreed = "DiagnosticOk",
 }
 
 function M.apply_highlights()
@@ -223,6 +225,68 @@ function M.open(opts)
     end,
   })
   return self
+end
+
+local CHOOSE_NS = vim.api.nvim_create_namespace "devdocs_choose"
+
+--- A modal menu in a centered float: shows `opts.lines` (with `opts.spans`
+--- highlighted), then reads keys until one of them answers. y / <CR> say
+--- yes, n / q / <Esc> (or an interrupt) say no; j / k / <C-d> / <C-u>
+--- scroll a menu taller than the window. Blocks, like confirm(), so a
+--- BufWriteCmd can ask before it returns (`:wq` then closes or not).
+--- @param opts { lines: string[], spans: table[]|nil, title: string|nil, width: integer|nil }
+--- @return boolean
+function M.choose(opts)
+  local width = opts.width
+  if not width then
+    width = 20
+    for _, l in ipairs(opts.lines) do
+      width = math.max(width, vim.fn.strdisplaywidth(l))
+    end
+  end
+  local f = M.open {
+    lines = opts.lines,
+    title = opts.title,
+    width = width,
+    height = #opts.lines,
+    mode = "float",
+    wrap = false,
+    conceal = false,
+  }
+  vim.wo[f.win].cursorline = false
+  for _, s in ipairs(opts.spans or {}) do
+    pcall(vim.api.nvim_buf_set_extmark, f.buf, CHOOSE_NS, s.row - 1, s.col_start, {
+      end_col = s.col_end,
+      hl_group = s.hl,
+    })
+  end
+  local yes = { y = true, Y = true, ["\r"] = true, ["\n"] = true }
+  local no = { n = true, N = true, q = true, ["\27"] = true, ["\3"] = true }
+  local scroll = {
+    j = "\5",
+    k = "\25",
+    [vim.api.nvim_replace_termcodes("<Down>", true, false, true)] = "\5",
+    [vim.api.nvim_replace_termcodes("<Up>", true, false, true)] = "\25",
+    ["\4"] = "\4",
+    ["\21"] = "\21",
+  }
+  local answer = false
+  while f:valid() do
+    vim.cmd.redraw()
+    local ok, ch = pcall(vim.fn.getcharstr)
+    if not ok or no[ch] then
+      break
+    elseif yes[ch] then
+      answer = true
+      break
+    elseif scroll[ch] then
+      vim.api.nvim_win_call(f.win, function()
+        vim.cmd("normal! " .. scroll[ch])
+      end)
+    end
+  end
+  f:close()
+  return answer
 end
 
 --- A yes/no confirmation that names what will happen.

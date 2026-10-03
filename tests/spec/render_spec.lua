@@ -280,3 +280,109 @@ describe("list render", function()
     )
   end)
 end)
+
+describe("list render: marks on docs that are not installed", function()
+  it("shows ● on a marked available version and on its language when its target is marked", function()
+    local s = state(100, 20, { installed = {}, jobs = {}, marked = { rust = true, ["python~3.12"] = true } })
+    local r = render.render(s)
+    local rust = vim.tbl_filter(function(l)
+      return l:find("Rust", 1, true)
+    end, r.lines)[1]
+    ok(vim.startswith(rust, "● "), rust)
+    local py = vim.tbl_filter(function(l)
+      return l:find("Python", 1, true)
+    end, r.lines)[1]
+    ok(vim.startswith(py, "● "), py)
+    s.marked = { ["python~3.9"] = true }
+    py = vim.tbl_filter(function(l)
+      return l:find("Python", 1, true)
+    end, render.render(s).lines)[1]
+    ok(vim.startswith(py, "◐ "), py)
+  end)
+
+  it("the hint line names the apply keys", function()
+    ok(render.render(state(140, 20)).lines[2]:find("S/:w apply", 1, true), render.render(state(140, 20)).lines[2])
+    ok(table.concat(render.HELP, "\n"):find(":w", 1, true))
+  end)
+end)
+
+describe("render.plan_lines", function()
+  local PLAN = {
+    install = {
+      { slug = "node", name = "Node.js", version = "24.1.0 (current)" },
+      { slug = "python~3.13", name = "Python", version = "3.13" },
+    },
+    uninstall = { { slug = "python~3.9", name = "Python", version = "3.9" } },
+    unknown = {},
+  }
+  local SIZES = { node = 2.3e6, ["python~3.13"] = 10e6, ["python~3.9"] = 45.6e6 }
+
+  local function span_text(lines, spans, hl)
+    local out = {}
+    for _, sp in ipairs(spans) do
+      if sp.hl == hl then
+        out[#out + 1] = lines[sp.row]:sub(sp.col_start + 1, sp.col_end)
+      end
+    end
+    return out
+  end
+
+  local function find(lines, pat)
+    for i, l in ipairs(lines) do
+      if l:find(pat) then
+        return i, l
+      end
+    end
+  end
+
+  it("lists installs then uninstalls with red / green totals and a key footer", function()
+    local lines, spans = render.plan_lines(PLAN, SIZES, 60)
+    local ih, iline = find(lines, "^ Install %(2%)")
+    local uh, uline = find(lines, "^ Uninstall %(1%)")
+    ok(ih and uh and ih < uh, table.concat(lines, "\n"))
+    ok(iline:find "%-12%.3 MB$", iline)
+    ok(uline:find "%+45%.6 MB$", uline)
+    eq(60, vim.fn.strdisplaywidth(iline))
+    eq({ "-12.3 MB" }, span_text(lines, spans, "DevDocsCost"))
+    eq({ "+45.6 MB" }, span_text(lines, spans, "DevDocsFreed"))
+    local n, nl = find(lines, "node")
+    ok(n > ih and n < uh, nl)
+    ok(nl:find("Node.js 24.1.0 (current)", 1, true), nl)
+    ok(nl:find "2.3 MB%s*$", nl)
+    local p, pl = find(lines, "python~3%.9")
+    ok(p > uh and pl:find("45.6 MB", 1, true), pl)
+    ok(lines[#lines]:find("y/⏎ apply   n/q/Esc cancel", 1, true), lines[#lines])
+    ok(#span_text(lines, spans, "DevDocsHeader") == 2)
+  end)
+
+  it("omits an empty group and shows ? for an unknown size", function()
+    local lines, spans = render.plan_lines({ install = {}, uninstall = PLAN.uninstall, unknown = {} }, {}, 50)
+    ok(not find(lines, "Install"), table.concat(lines, "\n"))
+    local _, uline = find(lines, "^ Uninstall %(1%)")
+    ok(uline:find "%+0 kB$", uline)
+    local _, pl = find(lines, "python~3%.9")
+    ok(pl:find "%?%s*$", pl)
+    eq({}, span_text(lines, spans, "DevDocsCost"))
+  end)
+
+  it("adds note lines (hidden marks, unknown slugs) before the footer", function()
+    local lines = render.plan_lines(PLAN, SIZES, 60, { "1 of them is not shown in the current view" })
+    local i = find(lines, "not shown")
+    ok(i and i < #lines, table.concat(lines, "\n"))
+  end)
+
+  it("fits long names in a narrow width", function()
+    local lines = render.plan_lines(PLAN, SIZES, 30)
+    for _, l in ipairs(lines) do
+      ok(vim.fn.strdisplaywidth(l) <= 30, l)
+    end
+  end)
+end)
+
+describe("plan menu highlight groups", function()
+  it("defines DevDocsCost (red) and DevDocsFreed (green) for the plan totals", function()
+    local hl = require("devdocs.ui.float").HIGHLIGHTS
+    eq("DiagnosticError", hl.DevDocsCost)
+    eq("DiagnosticOk", hl.DevDocsFreed)
+  end)
+end)

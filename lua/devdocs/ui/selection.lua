@@ -41,6 +41,36 @@ function M.row_slugs(row)
   return {}
 end
 
+--- Slugs `m` marks on a row: a doc row its own slug, installed or not (an
+--- install mark); a lang row its installed versions the filter shows, or,
+--- when none is installed, its newest shown version. A version that is
+--- installing right now is never markable.
+--- @param row table|nil
+--- @return string[]
+function M.mark_slugs(row)
+  if not row then
+    return {}
+  end
+  if row.kind == "doc" then
+    return row.status ~= "installing" and { row.slug } or {}
+  end
+  if row.kind == "lang" then
+    local installed = M.row_slugs(row)
+    if #installed > 0 then
+      local busy = {}
+      for _, c in ipairs(row.children or {}) do
+        busy[c.slug] = c.status == "installing" or nil
+      end
+      return vim.tbl_filter(function(s)
+        return not busy[s]
+      end, installed)
+    end
+    local first = (row.visible or row.children or {})[1]
+    return first and first.kind == "doc" and first.status ~= "installing" and { first.slug } or {}
+  end
+  return {}
+end
+
 -- Mark every slug, or unmark them all when every one is already marked.
 local function flip(marked, slugs)
   local out = copy(marked)
@@ -60,26 +90,30 @@ local function flip(marked, slugs)
   return out
 end
 
---- Toggle the mark of one row. A lang row marks all of its installed
---- versions, or unmarks them when they are all marked already.
+--- Toggle the mark of one row (M.mark_slugs): a lang row marks all of
+--- them, or unmarks them when they are all marked already.
 --- @param marked table<string, boolean>|nil
 --- @param row table|nil
 --- @return table<string, boolean>
 function M.toggle(marked, row)
-  return flip(marked, M.row_slugs(row))
+  return flip(marked, M.mark_slugs(row))
 end
 
---- Installed slugs in rows[from..to] (either order, clamped), sorted.
+--- Slugs in rows[from..to] (either order, clamped), sorted and deduped.
+--- `of` picks a row's slugs: M.row_slugs (installed ones, the default, what
+--- a delete takes) or M.mark_slugs (what a mark takes).
 --- @param rows table[]
 --- @param from integer
 --- @param to integer
+--- @param of (fun(row: table): string[])|nil
 --- @return string[]
-function M.range_targets(rows, from, to)
+function M.range_targets(rows, from, to, of)
+  of = of or M.row_slugs
   local lo, hi = math.min(from, to), math.max(from, to)
   lo, hi = math.max(1, lo), math.min(#rows, hi)
   local seen, out = {}, {}
   for i = lo, hi do
-    for _, s in ipairs(M.row_slugs(rows[i])) do
+    for _, s in ipairs(of(rows[i])) do
       if not seen[s] then
         seen[s] = true
         out[#out + 1] = s
@@ -90,15 +124,40 @@ function M.range_targets(rows, from, to)
   return out
 end
 
---- Mark every installed row in a range; unmark the range when it is all
---- marked already, so pressing `m` on the same selection twice undoes it.
+--- Mark every row in a range (M.mark_slugs, so installed or not); unmark
+--- the range when it is all marked already, so pressing `m` on the same
+--- selection twice undoes it.
 --- @param marked table<string, boolean>|nil
 --- @param rows table[]
 --- @param from integer
 --- @param to integer
 --- @return table<string, boolean>
 function M.mark_range(marked, rows, from, to)
-  return flip(marked, M.range_targets(rows, from, to))
+  return flip(marked, M.range_targets(rows, from, to, M.mark_slugs))
+end
+
+--- Mark `slugs` (set, not toggle), keep the other marks.
+--- @param marked table<string, boolean>|nil
+--- @param slugs string[]
+--- @return table<string, boolean>
+function M.mark(marked, slugs)
+  local out = copy(marked)
+  for _, s in ipairs(slugs or {}) do
+    out[s] = true
+  end
+  return out
+end
+
+--- Drop the marks of `slugs`, keep the rest.
+--- @param marked table<string, boolean>|nil
+--- @param slugs string[]
+--- @return table<string, boolean>
+function M.unmark(marked, slugs)
+  local out = copy(marked)
+  for _, s in ipairs(slugs or {}) do
+    out[s] = nil
+  end
+  return out
 end
 
 --- Marked slugs, sorted.
@@ -144,15 +203,61 @@ function M.count(marked)
   return #M.targets(marked)
 end
 
---- Drop marks for slugs that are not installed any more.
+--- Drop marks for slugs that are neither installed nor in the docs list
+--- (a mark on a doc that is not installed means "install it", so those
+--- stay). Without a docs list (not loaded yet) every mark stays.
 --- @param marked table<string, boolean>|nil
 --- @param installed table<string, table>
+--- @param docs DevDocsDoc[]|nil manifest
 --- @return table<string, boolean>
-function M.cleanup(marked, installed)
+function M.cleanup(marked, installed, docs)
+  local known = nil
+  if docs and #docs > 0 then
+    known = {}
+    for _, d in ipairs(docs) do
+      known[d.slug] = true
+    end
+  end
   local out = {}
   for slug, on in pairs(marked or {}) do
-    if on and installed[slug] then
+    if on and (installed[slug] or not known or known[slug]) then
       out[slug] = true
+    end
+  end
+  return out
+end
+
+local function plan_entry(slug, doc, meta)
+  doc, meta = doc or {}, meta or {}
+  local version = doc.version
+  if version == nil then
+    version = meta.doc_version or ""
+  end
+  if version == "" then
+    local release = doc.release or meta.release or ""
+    version = release ~= "" and (release .. " (current)") or ""
+  end
+  return { slug = slug, name = doc.name or meta.name or slug, version = version }
+end
+
+--- What applying the marks (:w / S) does: install every marked doc that is
+--- not installed, uninstall every marked one that is. A mark the docs list
+--- does not know and that is not installed can not be installed: `unknown`.
+--- Each list is sorted by slug.
+--- @param marked table<string, boolean>|nil
+--- @param installed table<string, table> slug -> meta
+--- @param docs_by_slug table<string, DevDocsDoc> manifest.by_slug
+--- @return { install: { slug: string, name: string, version: string }[], uninstall: table[], unknown: string[] }
+function M.plan(marked, installed, docs_by_slug)
+  installed, docs_by_slug = installed or {}, docs_by_slug or {}
+  local out = { install = {}, uninstall = {}, unknown = {} }
+  for _, slug in ipairs(M.targets(marked)) do
+    if installed[slug] then
+      out.uninstall[#out.uninstall + 1] = plan_entry(slug, docs_by_slug[slug], installed[slug])
+    elseif docs_by_slug[slug] then
+      out.install[#out.install + 1] = plan_entry(slug, docs_by_slug[slug], nil)
+    else
+      out.unknown[#out.unknown + 1] = slug
     end
   end
   return out
