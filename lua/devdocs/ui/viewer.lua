@@ -41,7 +41,7 @@ M.FOOTER = {
   { "⌫", "back" },
   { "I", "index" },
   { "e", "examples" },
-  { "p", "pages" },
+  { "p", "pages", keep = true },
   { "n/N", "section" },
   { "c/C", "chapter" },
   { "s", "search" },
@@ -59,7 +59,7 @@ M.FOOTER = {
 function M.footer(mode)
   local out = {}
   for _, h in ipairs(M.FOOTER) do
-    out[#out + 1] = h[1] == "p" and { "p", mode == "page" and "paginated" or "pages" } or h
+    out[#out + 1] = h[1] == "p" and { "p", mode == "page" and "paginated" or "pages", keep = true } or h
   end
   return out
 end

@@ -675,3 +675,204 @@ describe("lookup.explain config", function()
     ok(ok_, tostring(err))
   end)
 end)
+
+describe("lookup.open without an entry (the index)", function()
+  local paths = require "devdocs.paths"
+  local store = require "devdocs.store"
+
+  local root = tmpdir()
+  config.resolve { data_dir = root }
+  store.invalidate()
+  for _, v in ipairs { "5.1", "5.4" } do
+    local slug = "lua~" .. v
+    store.write_json(paths.meta_file(slug), { slug = slug, name = "Lua", doc_version = v }, "meta")
+    store.write_file(
+      paths.entries_file(slug),
+      store.encode_entries { { name = "assert()", path = "index#pdf-assert", type = "Standard Libraries" } }
+    )
+  end
+  store.invalidate()
+
+  --- Run fn with the viewer, detect and ui.select stubbed; returns what was called.
+  --- @param o { buffer_slugs?: string[], viewer_slug?: string, newest?: string[], choose?: string, installed?: string[] }
+  local function scenario(o, fn)
+    local calls = { index = {}, open = {}, notify = {}, select = nil }
+    local saved = {
+      open_index = viewer.open_index,
+      open = viewer.open,
+      current = viewer.current_view,
+      buffer = detect.buffer,
+      newest = detect.newest_slugs,
+      select = vim.ui.select,
+      notify = vim.notify,
+      lookup = rank.lookup,
+      decisive = rank.decisive,
+      sources = index.sources,
+      installed = store.installed,
+    }
+    viewer.open_index = function(slug, opts)
+      table.insert(calls.index, { slug = slug, opts = opts })
+    end
+    viewer.open = function(view)
+      table.insert(calls.open, view)
+    end
+    viewer.current_view = function()
+      return o.viewer_slug and { slug = o.viewer_slug, mode = "section" } or nil
+    end
+    detect.buffer = function()
+      return { ft = "lua", bases = { "lua" }, missing = {}, slugs = o.buffer_slugs or {}, root = "/p" }
+    end
+    detect.newest_slugs = function()
+      return o.newest or { "lua~5.4" }
+    end
+    vim.ui.select = function(items, select_opts, on_choice)
+      calls.select = { items = items, opts = select_opts }
+      on_choice(o.choose)
+    end
+    vim.notify = function(msg, level)
+      table.insert(calls.notify, { msg = msg, level = level })
+    end
+    rank.lookup = function()
+      return { { slug = "lua~5.4", entry = { name = "assert()", path = "index#pdf-assert" } } }
+    end
+    rank.decisive = function()
+      return true
+    end
+    index.sources = function()
+      return {}
+    end
+    if o.installed then
+      store.installed = function()
+        return o.installed
+      end
+    end
+    local ok_run, err = pcall(fn, calls)
+    viewer.open_index = saved.open_index
+    viewer.open = saved.open
+    viewer.current_view = saved.current
+    detect.buffer = saved.buffer
+    detect.newest_slugs = saved.newest
+    vim.ui.select = saved.select
+    vim.notify = saved.notify
+    rank.lookup = saved.lookup
+    rank.decisive = saved.decisive
+    index.sources = saved.sources
+    store.installed = saved.installed
+    if not ok_run then
+      error(err, 0)
+    end
+    return calls
+  end
+
+  it("resolves a doc name to the newest installed slug, or an exact slug, or nothing", function()
+    eq("lua~5.4", (lookup.resolve_doc "lua"))
+    eq("lua~5.1", (lookup.resolve_doc "lua~5.1"))
+    eq(nil, (lookup.resolve_doc "nonesuch"))
+  end)
+
+  it("opens the index of the doc named, the newest version for a bare name", function()
+    local calls = scenario({}, function()
+      lookup.open("lua", nil)
+      lookup.open("lua~5.1", nil)
+      lookup.open("lua", "")
+    end)
+    eq(3, #calls.index)
+    eq("lua~5.4", calls.index[1].slug)
+    eq("lua~5.1", calls.index[2].slug)
+    eq("lua~5.4", calls.index[3].slug)
+    eq(0, #calls.open, "no entry page should open")
+  end)
+
+  it("opens the index of the buffer's doc when no doc is given", function()
+    local calls = scenario({ buffer_slugs = { "lua~5.1", "lua~5.4" } }, function()
+      lookup.open(nil, nil)
+      lookup.open("", nil)
+    end)
+    eq(
+      { "lua~5.1", "lua~5.1" },
+      vim.tbl_map(function(c)
+        return c.slug
+      end, calls.index)
+    )
+    eq(nil, calls.select)
+  end)
+
+  it("falls back to the doc in the open viewer", function()
+    local calls = scenario({ viewer_slug = "lua~5.1" }, function()
+      lookup.open(nil, nil)
+    end)
+    eq("lua~5.1", calls.index[1].slug)
+    eq(nil, calls.select)
+  end)
+
+  it("asks which doc when there is no buffer doc and no viewer", function()
+    local calls = scenario({ newest = { "lua~5.4", "python~3.12" }, choose = "python~3.12" }, function()
+      lookup.open(nil, nil)
+    end)
+    eq({ "lua~5.4", "python~3.12" }, calls.select.items)
+    eq("DevDocs index of:", calls.select.opts.prompt)
+    eq("python~3.12", calls.index[1].slug)
+  end)
+
+  it("opens nothing when the choice is cancelled", function()
+    local calls = scenario({ newest = { "lua~5.4", "python~3.12" } }, function()
+      lookup.open(nil, nil)
+    end)
+    eq(0, #calls.index)
+    eq(0, #calls.notify)
+  end)
+
+  it("warns when no docs are installed", function()
+    local calls = scenario({ newest = {}, installed = {} }, function()
+      lookup.open(nil, nil)
+    end)
+    eq(0, #calls.index)
+    eq(nil, calls.select)
+    ok(calls.notify[1] and calls.notify[1].msg:find("no docs installed", 1, true), vim.inspect(calls.notify))
+    ok(calls.notify[1].msg:find(":DevDocs install", 1, true), calls.notify[1].msg)
+    eq(vim.log.levels.WARN, calls.notify[1].level)
+  end)
+
+  it("warns about a doc that is not installed and opens no index", function()
+    local calls = scenario({}, function()
+      lookup.open("nonesuch", nil)
+    end)
+    eq(0, #calls.index)
+    ok(calls.notify[1] and calls.notify[1].msg:find("nonesuch", 1, true), vim.inspect(calls.notify))
+  end)
+
+  it("still opens the entry's page when an entry is given", function()
+    local calls = scenario({}, function()
+      lookup.open("lua", "assert")
+    end)
+    eq(0, #calls.index)
+    eq(1, #calls.open)
+    eq("assert()", calls.open[1].entry.name)
+    eq("section", calls.open[1].mode)
+  end)
+
+  it("joins the words after the doc into one entry query: :DevDocs open lua table insert", function()
+    local commands = require "devdocs.commands"
+    local devdocs = require "devdocs"
+    local saved = devdocs.open
+    local got = {}
+    devdocs.open = function(doc, entry)
+      got[#got + 1] = { doc, entry }
+    end
+    local msgs = {}
+    local saved_notify = vim.notify
+    vim.notify = function(m)
+      msgs[#msgs + 1] = m
+    end
+    local ok_run, err = pcall(function()
+      commands.subcommands.open {}
+      commands.subcommands.open { "lua" }
+      commands.subcommands.open { "lua", "table", "insert" }
+    end)
+    devdocs.open = saved
+    vim.notify = saved_notify
+    assert(ok_run, err)
+    eq({ { nil, nil }, { "lua", nil }, { "lua", "table insert" } }, got)
+    eq(0, #msgs, "no usage error any more: " .. vim.inspect(msgs))
+  end)
+end)

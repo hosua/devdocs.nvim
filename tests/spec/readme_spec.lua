@@ -24,6 +24,13 @@ describe("README", function()
     end
   end)
 
+  it("documents the index view", function()
+    ok(readme:find("open [doc] [entry]", 1, true), "README lacks the `open [doc] [entry]` row")
+    ok(readme:find('map("n", "<leader>do", "<cmd>DevDocs open<cr>"', 1, true), "README lacks the <leader>do mapping")
+    ok(readme:find("`I`", 1, true), "README lacks the viewer's I key")
+    ok(readme:find("zR", 1, true) and readme:find("zM", 1, true), "README lacks the index keys")
+  end)
+
   it("ships a vimdoc that helptags accepts", function()
     local docdir = vim.fn.tempname()
     vim.fn.mkdir(docdir, "p")
@@ -38,6 +45,7 @@ describe("README", function()
       "devdocs-import",
       "devdocs-viewer",
       "devdocs-manager",
+      "devdocs-index",
     } do
       ok(tags:find(tag, 1, true), "missing help tag " .. tag)
     end

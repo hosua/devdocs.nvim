@@ -347,6 +347,16 @@ describe("viewer p (whole page at the current section)", function()
       return c[1]
     end, footer)) or footer
   end
+  --- What the p hint says in the current view. The float's own footer drops
+  --- trailing hints (all but ? and q) when the window is narrow, so read the
+  --- hint list the viewer builds for the mode.
+  local function p_label()
+    for _, h in ipairs(viewer.footer(viewer.current_view().mode)) do
+      if h[1] == "p" then
+        return h[2]
+      end
+    end
+  end
   local function cur()
     return vim.api.nvim_win_get_cursor(0)[1]
   end
@@ -360,12 +370,13 @@ describe("viewer p (whole page at the current section)", function()
   it("p toggles between the paginated view and the whole page, keeping the place", function()
     viewer.open { slug = slug, path = entry.path, entry = entry, mode = "section" }
     eq(31, vim.api.nvim_buf_line_count(0))
-    ok(footer_text():find("p pages", 1, true), footer_text())
+    eq("pages", p_label())
+    ok(footer_text():find("? help", 1, true), footer_text())
     viewer.toggle()
     eq("page", mode())
     eq(20, cur())
     eq(20, topline())
-    ok(footer_text():find("p paginated", 1, true), footer_text())
+    eq("paginated", p_label())
     viewer.toggle()
     eq("section", mode())
     eq(20, viewer.current_view().page_start)
@@ -373,7 +384,7 @@ describe("viewer p (whole page at the current section)", function()
     eq(1, topline())
     eq(31, vim.api.nvim_buf_line_count(0))
     eq("### assert (v [, message])", vim.api.nvim_buf_get_lines(0, 0, 1, false)[1])
-    ok(footer_text():find("p pages", 1, true), footer_text())
+    eq("pages", p_label())
     viewer.close()
   end)
 
@@ -486,6 +497,15 @@ describe("viewer heading navigation (n N c C)", function()
   end
   local function topline()
     return vim.fn.getwininfo(vim.api.nvim_get_current_win())[1].topline
+  end
+  --- What the p hint says in the current view (the float's own footer drops
+  --- trailing hints on a narrow window).
+  local function p_label()
+    for _, h in ipairs(viewer.footer(viewer.current_view().mode)) do
+      if h[1] == "p" then
+        return h[2]
+      end
+    end
   end
   local function mode()
     return viewer.current_view().mode
@@ -722,11 +742,7 @@ describe("viewer heading navigation (n N c C)", function()
     eq(15, viewer.current_view().page_start)
     viewer.set_mode "examples"
     eq({ "**values 18**", "```lua", "# not a heading", "```" }, vim.api.nvim_buf_get_lines(0, 0, -1, false))
-    local chunks = vim.api.nvim_win_get_config(0).footer
-    local text = type(chunks) == "table" and table.concat(vim.tbl_map(function(c)
-      return c[1]
-    end, chunks)) or chunks
-    ok(text:find("p pages", 1, true), text)
+    eq("pages", p_label())
     viewer.close()
   end)
 
@@ -753,11 +769,7 @@ describe("viewer heading navigation (n N c C)", function()
     viewer.close()
     open("index", "section")
     eq("page", mode())
-    local footer = vim.api.nvim_win_get_config(0).footer
-    local text = type(footer) == "table" and table.concat(vim.tbl_map(function(c)
-      return c[1]
-    end, footer)) or footer
-    ok(text:find("p paginated", 1, true), text)
+    eq("paginated", p_label())
     viewer.close()
   end)
 
@@ -931,6 +943,556 @@ describe("viewer help screen (aligned tables)", function()
       end
     end
     ok(seen, "no DevDocsHelpHeader extmark")
+    viewer.close()
+  end)
+end)
+
+describe("viewer index (glossary view)", function()
+  local root = tmpdir()
+  config.resolve { data_dir = root }
+  store.invalidate()
+
+  local page = { "# Lua manual", "" }
+  for i = 3, 12 do
+    page[i] = ("intro %d"):format(i)
+  end
+  vim.list_extend(page, {
+    "### assert (v [, message])", -- 13
+    "",
+    "Raises an error if v is false.",
+    "",
+    "### error (message)", -- 17
+    "",
+    "Raises an error.",
+    "",
+    "### table.insert (list, value)", -- 21
+    "",
+    "Inserts a value.",
+  })
+  for i = 24, 60 do
+    page[i] = ("outro %d"):format(i)
+  end
+  local ENTRIES = {
+    { name = "Introduction", path = "index", type = "Manual" },
+    { name = "Basic Concepts", path = "index#2", type = "Manual" },
+    { name = "assert()", path = "index#pdf-assert", type = "Standard Libraries" },
+    { name = "error()", path = "index#pdf-error", type = "Standard Libraries" },
+    { name = "table.insert()", path = "index#pdf-table.insert", type = "Standard Libraries" },
+  }
+  local function mkdoc(slug, name, version, types, entries)
+    store.write_json(
+      paths.meta_file(slug),
+      { slug = slug, name = name, doc_version = version, types = types, entry_count = #entries },
+      "meta"
+    )
+    store.write_file(paths.entries_file(slug), store.encode_entries(entries))
+    store.write_file(paths.page_file(slug, "index"), table.concat(page, "\n") .. "\n")
+    store.write_json(
+      paths.anchors_file(slug),
+      { pages = { index = { ["2"] = 5, ["pdf-assert"] = 13, ["pdf-error"] = 17, ["pdf-table.insert"] = 21 } } },
+      "anchors"
+    )
+    store.invalidate()
+    return slug
+  end
+  -- a fresh slug per test: the index remembers its state per doc
+  local n = 0
+  local function lua_doc()
+    n = n + 1
+    return mkdoc(
+      "lua~7." .. n,
+      "Lua",
+      "7." .. n,
+      { { slug = "manual", name = "Manual", count = 2 }, { slug = "stdlib", name = "Standard Libraries", count = 3 } },
+      ENTRIES
+    )
+  end
+  local function entry_of(slug, name)
+    for _, e in ipairs(store.entries(slug)) do
+      if e.name == name then
+        return e
+      end
+    end
+  end
+
+  local function press(keys)
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "mx", false)
+  end
+  local function lines()
+    return vim.api.nvim_buf_get_lines(0, 0, -1, false)
+  end
+  local function cur()
+    return vim.api.nvim_win_get_cursor(0)[1]
+  end
+  local function at(line)
+    vim.api.nvim_win_set_cursor(0, { line, 0 })
+  end
+  local function mode()
+    return viewer.current_view().mode
+  end
+  local function title()
+    local t = vim.api.nvim_win_get_config(0).title
+    return type(t) == "table" and t[1][1] or t
+  end
+  local function footer_text()
+    local f = vim.api.nvim_win_get_config(0).footer
+    return type(f) == "table" and table.concat(vim.tbl_map(function(c)
+      return c[1]
+    end, f)) or f
+  end
+  local function row_with(text)
+    for i, l in ipairs(lines()) do
+      if l:find(text, 1, true) then
+        return i
+      end
+    end
+  end
+  --- buffer-local normal-mode mapping of `lhs` in the current buffer
+  local function mapped(lhs)
+    local m = vim.fn.maparg(lhs, "n", false, true)
+    return type(m) == "table" and next(m) ~= nil and m.buffer == 1
+  end
+  local function capture(fn)
+    local saved, msgs = vim.notify, {}
+    vim.notify = function(m)
+      msgs[#msgs + 1] = m
+    end
+    local ok_run, err = pcall(fn)
+    vim.notify = saved
+    assert(ok_run, err)
+    return msgs
+  end
+  local function open_section(slug, name)
+    local e = entry_of(slug, name)
+    viewer.open { slug = slug, path = e.path, entry = e, mode = "section" }
+  end
+
+  it("opens the doc's index: doc row, one collapsed row per type with its count", function()
+    local slug = lua_doc()
+    viewer.open_index(slug)
+    eq("index", mode())
+    eq(slug, viewer.current_view().slug)
+    local l = lines()
+    eq(3, #l)
+    ok(l[1]:find "^▾ Lua", l[1])
+    ok(l[1]:find "7%.%d+$", l[1])
+    ok(l[2]:find "^  ▸ Manual", l[2])
+    ok(l[2]:find "2$", l[2])
+    ok(l[3]:find "^  ▸ Standard Libraries", l[3])
+    ok(l[3]:find "3$", l[3])
+    ok(title():find("› index", 1, true), title())
+    ok(title():find("Lua 7", 1, true), title())
+    local foot = footer_text()
+    ok(foot:find("⏎ open", 1, true), foot)
+    ok(foot:find("? help", 1, true), foot)
+    viewer.close()
+  end)
+
+  it("warns instead of opening an index for a doc that is not installed", function()
+    viewer.close()
+    local msgs = capture(function()
+      viewer.open_index "nope~1"
+    end)
+    ok(#msgs >= 1, "no warning")
+    ok(msgs[1]:find("not installed", 1, true), msgs[1])
+    eq(nil, viewer.current_view())
+  end)
+
+  it("shows the index as plain text: no conceal, no wrap, a cursorline, no treesitter", function()
+    local slug = lua_doc()
+    open_section(slug, "assert()")
+    local win = vim.api.nvim_get_current_win()
+    local buf = vim.api.nvim_get_current_buf()
+    local conceal, wrap = vim.wo[win].conceallevel, vim.wo[win].wrap
+    local ts = vim.treesitter.highlighter.active[buf] ~= nil
+    viewer.index()
+    eq("index", mode())
+    eq(0, vim.wo[win].conceallevel)
+    eq(false, vim.wo[win].wrap)
+    eq(true, vim.wo[win].cursorline)
+    eq(nil, vim.treesitter.highlighter.active[buf])
+    viewer.index() -- back to the section
+    eq("section", mode())
+    eq(conceal, vim.wo[win].conceallevel)
+    eq(wrap, vim.wo[win].wrap)
+    eq(ts, vim.treesitter.highlighter.active[buf] ~= nil)
+    viewer.close()
+  end)
+
+  it("expands and folds with l / h, <Tab>, zR / zM", function()
+    local slug = lua_doc()
+    viewer.open_index(slug)
+    at(2)
+    press "l"
+    eq(5, #lines())
+    ok(lines()[2]:find "^  ▾ Manual", lines()[2])
+    eq("      Introduction", lines()[3])
+    eq(2, cur())
+    press "l" -- on an open type: first entry
+    eq(3, cur())
+    press "h" -- on an entry: fold its type, cursor on it
+    eq(3, #lines())
+    eq(2, cur())
+    press "h" -- closed type: the doc row
+    eq(1, cur())
+    press "zR"
+    eq(8, #lines())
+    press "zM"
+    eq(3, #lines())
+    at(3)
+    press "<Tab>"
+    eq(6, #lines())
+    press "<Tab>"
+    eq(3, #lines())
+    viewer.close()
+  end)
+
+  it("jumps between types with } and {", function()
+    local slug = lua_doc()
+    viewer.open_index(slug)
+    press "zR"
+    at(1)
+    press "}"
+    eq(2, cur())
+    press "}"
+    eq(5, cur())
+    press "}"
+    eq(5, cur())
+    at(7)
+    press "{"
+    eq(5, cur())
+    press "{"
+    eq(2, cur())
+    viewer.close()
+  end)
+
+  it("opens an entry on <CR>, and <BS> returns to the index as it was left", function()
+    local slug = lua_doc()
+    viewer.open_index(slug)
+    at(3)
+    press "<CR>" -- on a type: expand
+    eq("index", mode())
+    local expanded = lines()
+    at(row_with "error()")
+    press "<CR>"
+    eq("section", mode())
+    eq("error()", viewer.current_view().entry.name)
+    eq(slug, viewer.current_view().slug)
+    ok(vim.api.nvim_buf_get_lines(0, 0, 1, false)[1]:find("error", 1, true))
+    viewer.back()
+    eq("index", mode())
+    eq(expanded, lines())
+    eq(row_with "error()", cur())
+    viewer.close()
+  end)
+
+  it("I from a section opens the index with the entry's type expanded and the cursor on it", function()
+    local slug = lua_doc()
+    open_section(slug, "assert()")
+    press "I"
+    eq("index", mode())
+    local row = row_with "assert()"
+    ok(row, "assert() not listed")
+    eq(row, cur())
+    ok(lines()[row]:find("●", 1, true), lines()[row])
+    ok(row_with "▾ Standard Libraries", "its type is not open")
+    ok(row_with "▸ Manual", "the other type should stay closed")
+    eq(nil, row_with "Introduction")
+    viewer.close()
+  end)
+
+  it("I from the whole page reveals the entry for that page too", function()
+    local slug = lua_doc()
+    local e = entry_of(slug, "error()")
+    viewer.open { slug = slug, path = e.path, entry = e, mode = "page" }
+    viewer.index()
+    eq("index", mode())
+    ok(row_with "error()", "error() not listed")
+    viewer.close()
+  end)
+
+  it("I again returns to the page, and I I toggles", function()
+    local slug = lua_doc()
+    open_section(slug, "assert()")
+    press "I"
+    eq("index", mode())
+    press "I"
+    eq("section", mode())
+    eq("assert()", viewer.current_view().entry.name)
+    press "I"
+    eq("index", mode())
+    ok(lines()[cur()]:find("●", 1, true))
+    viewer.back()
+    eq("section", mode())
+    viewer.close()
+  end)
+
+  it("I in an index opened directly has no page to return to", function()
+    local slug = lua_doc()
+    viewer.open_index(slug)
+    local msgs = capture(function()
+      press "I"
+    end)
+    eq("index", mode())
+    ok(msgs[1] and msgs[1]:find("no page to return to", 1, true), vim.inspect(msgs))
+    viewer.close()
+  end)
+
+  it("opens the index of an entry given to open_index, with the entry marked", function()
+    local slug = lua_doc()
+    local e = entry_of(slug, "table.insert()")
+    viewer.open_index(slug, { path = e.path, name = e.name })
+    local row = row_with "table.insert()"
+    eq(row, cur())
+    ok(lines()[row]:find("●", 1, true))
+    viewer.close()
+  end)
+
+  it("the index help lists the index keys, and <BS> returns to the index", function()
+    local slug = lua_doc()
+    viewer.open_index(slug)
+    press "zR"
+    local before = lines()
+    press "?"
+    eq("DevDocs index keys", lines()[1])
+    ok(row_with "Backspace (<BS>), u", "no BS row")
+    ok(row_with "filter entries by name", "no filter row")
+    press "<BS>"
+    eq("index", mode())
+    eq(before, lines())
+    viewer.close()
+  end)
+
+  it("maps the index keys in the index, and the page keys elsewhere", function()
+    local slug = lua_doc()
+    open_section(slug, "assert()")
+    for _, k in ipairs { "e", "p", "n", "N", "c", "C", "I", "s", "o", "y", "?", "q", "<BS>", "u", "<CR>" } do
+      ok(mapped(k), "section: " .. k .. " not mapped")
+    end
+    for _, k in ipairs { "h", "l", "<Tab>", "zR", "zM", "}", "{", "/", "d", "G", "gg", "j", "k" } do
+      ok(not mapped(k), "section: " .. k .. " should be native")
+    end
+    press "I"
+    for _, k in ipairs {
+      "<CR>",
+      "<2-LeftMouse>",
+      "l",
+      "h",
+      "<Tab>",
+      "zR",
+      "zM",
+      "}",
+      "{",
+      "/",
+      "I",
+      "<BS>",
+      "u",
+      "s",
+      "d",
+      "o",
+      "y",
+      "?",
+      "q",
+      "<Esc>",
+    } do
+      ok(mapped(k), "index: " .. k .. " not mapped")
+    end
+    for _, k in ipairs { "e", "p", "n", "N", "c", "C", "G", "gg", "j", "k" } do
+      ok(not mapped(k), "index: " .. k .. " should be unmapped")
+    end
+    press "I"
+    for _, k in ipairs { "e", "p", "n", "c", "I" } do
+      ok(mapped(k), "back on the page: " .. k .. " not mapped")
+    end
+    for _, k in ipairs { "h", "l", "zR", "d", "G" } do
+      ok(not mapped(k), "back on the page: " .. k .. " should be native")
+    end
+    viewer.close()
+  end)
+
+  it("G stays native: it goes to the bottom of a page and of the index", function()
+    local slug = lua_doc()
+    open_section(slug, "assert()")
+    viewer.set_mode "page"
+    press "G"
+    eq(60, cur())
+    viewer.close()
+    viewer.open_index(slug)
+    press "zR"
+    press "G"
+    eq(8, cur())
+    press "gg"
+    eq(1, cur())
+    viewer.close()
+  end)
+
+  it("filters entries live with /, keeps the filter on <CR>, and clears it on <Esc>", function()
+    local slug = lua_doc()
+    viewer.open_index(slug)
+    press "/insert<CR>"
+    eq("index", mode())
+    local l = lines()
+    eq(3, #l)
+    ok(l[2]:find("Standard Libraries", 1, true), l[2])
+    ok(l[2]:find("1/3", 1, true), l[2])
+    ok(l[3]:find("table.insert()", 1, true), l[3])
+    eq(3, cur())
+    ok(title():find("/insert (1)", 1, true), title())
+    press "/ins<Esc>" -- a new filter typed, then cancelled
+    eq("index", mode())
+    eq(3, #lines())
+    ok(row_with "▸ Manual")
+    viewer.close()
+  end)
+
+  it("edits the filter with <BS> while typing", function()
+    local slug = lua_doc()
+    viewer.open_index(slug)
+    press "/errx<BS>or<CR>"
+    local l = lines()
+    eq(3, #l)
+    ok(l[3]:find("error()", 1, true), l[3])
+    viewer.close()
+  end)
+
+  it("keeps the filter and the cursor across opening an entry and <BS>", function()
+    local slug = lua_doc()
+    viewer.open_index(slug)
+    press "/ass<CR>"
+    local filtered = lines()
+    local row = cur()
+    press "<CR>"
+    eq("section", mode())
+    ok(vim.api.nvim_buf_get_lines(0, 0, 1, false)[1]:find("assert", 1, true))
+    viewer.back()
+    eq("index", mode())
+    eq(filtered, lines())
+    eq(row, cur())
+    viewer.close()
+  end)
+
+  it("does not touch the recent list or the on_open hook while moving around the index", function()
+    local slug = lua_doc()
+    local opened, recent = 0, 0
+    local saved_push = store.push_recent
+    store.push_recent = function(...)
+      recent = recent + 1
+      return saved_push(...)
+    end
+    config.resolve {
+      data_dir = root,
+      hooks = {
+        on_open = function()
+          opened = opened + 1
+        end,
+      },
+    }
+    local ok_run, err = pcall(function()
+      viewer.open_index(slug)
+      press "zR"
+      press "zM"
+      press "l"
+      press "/e<CR>"
+      press "?"
+      press "<BS>"
+      eq(0, recent)
+      eq(0, opened)
+      at(3)
+      press "zR"
+      at(row_with "assert()")
+      press "<CR>" -- an entry is a real page open
+      eq("section", mode())
+      ok(recent >= 1, "opening an entry should be recorded")
+      ok(opened >= 1, "opening an entry should call on_open")
+    end)
+    store.push_recent = saved_push
+    config.resolve { data_dir = root }
+    viewer.close()
+    assert(ok_run, err)
+  end)
+
+  it("lists a single-type doc's entries straight under the doc row", function()
+    local slug = mkdoc("deno~1", "Deno", "1", { { slug = "api", name = "API", count = 2 } }, {
+      { name = "Deno.cwd()", path = "index#2", type = "API" },
+      { name = "Deno.exit()", path = "index#pdf-assert", type = "API" },
+    })
+    viewer.open_index(slug)
+    local l = lines()
+    eq(3, #l)
+    ok(l[1]:find "^▾ Deno", l[1])
+    eq("    Deno.cwd()", l[2])
+    eq("    Deno.exit()", l[3])
+    for _, line in ipairs(l) do
+      ok(not line:find("▸", 1, true), line)
+    end
+    viewer.close()
+  end)
+
+  it("says so when a doc has no entries", function()
+    local slug = mkdoc("empty~1", "Empty", "1", {}, {})
+    viewer.open_index(slug)
+    ok(table.concat(lines(), "\n"):find("no entries in empty~1", 1, true), vim.inspect(lines()))
+    viewer.close()
+  end)
+
+  it("d switches to another installed doc's index and <BS> comes back", function()
+    local slug = lua_doc()
+    mkdoc("deno~1", "Deno", "1", { { slug = "api", name = "API", count = 2 } }, {
+      { name = "Deno.cwd()", path = "index#2", type = "API" },
+      { name = "Deno.exit()", path = "index#pdf-assert", type = "API" },
+    })
+    local saved = vim.ui.select
+    local offered
+    vim.ui.select = function(items, _, on_choice)
+      offered = items
+      for _, item in ipairs(items) do
+        if vim.inspect(item):find("deno", 1, true) then
+          return on_choice(item, 1)
+        end
+      end
+      on_choice(nil)
+    end
+    viewer.open_index(slug)
+    local ok_run, err = pcall(function()
+      press "d"
+      ok(offered and #offered >= 2, vim.inspect(offered))
+      eq("index", mode())
+      eq("deno~1", viewer.current_view().slug)
+      ok(lines()[1]:find("Deno", 1, true), lines()[1])
+      viewer.back()
+      eq(slug, viewer.current_view().slug)
+      ok(lines()[1]:find("Lua", 1, true), lines()[1])
+    end)
+    vim.ui.select = saved
+    viewer.close()
+    assert(ok_run, err)
+  end)
+
+  it("redraws the index on VimResized without error", function()
+    local slug = lua_doc()
+    viewer.open_index(slug)
+    press "zR"
+    local before = lines()
+    vim.api.nvim_exec_autocmds("VimResized", {})
+    eq("index", mode())
+    eq(#before, #lines())
+    viewer.close()
+  end)
+
+  it("<BS> to the index of a doc uninstalled meanwhile is a message, not an error", function()
+    local slug = lua_doc()
+    viewer.open_index(slug)
+    press "zR"
+    at(row_with "assert()")
+    press "<CR>"
+    eq("section", mode())
+    vim.fn.delete(paths.doc_dir(slug), "rf")
+    store.invalidate()
+    local ok_run, err
+    capture(function()
+      ok_run, err = pcall(viewer.back)
+    end)
+    ok(ok_run, tostring(err))
     viewer.close()
   end)
 end)
