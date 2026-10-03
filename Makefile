@@ -1,13 +1,18 @@
 .PHONY: test integration smoke golden fmt check
 
-test:
-	nvim --headless -u NONE -l tests/run.lua spec
+# Both run against a throwaway XDG tree: a bug can never touch real user data,
+# and nothing from the user's config or site dir (nvim-treesitter's parsers and
+# queries, other plugins) leaks onto the runtimepath, so local runs match CI.
+HERMETIC = tmp=$$(mktemp -d) && \
+	  XDG_CONFIG_HOME=$$tmp/config XDG_DATA_HOME=$$tmp/data XDG_STATE_HOME=$$tmp/state \
+	  XDG_CACHE_HOME=$$tmp/cache XDG_CONFIG_DIRS=$$tmp/config-dirs XDG_DATA_DIRS=$$tmp/data-dirs \
+	  nvim --headless -u NONE -l tests/run.lua
 
-# Runs against a throwaway XDG tree so a bug can never touch real user data.
+test:
+	@$(HERMETIC) spec; rc=$$?; rm -rf $$tmp; exit $$rc
+
 integration:
-	@tmp=$$(mktemp -d) && \
-	  XDG_DATA_HOME=$$tmp/data XDG_STATE_HOME=$$tmp/state XDG_CACHE_HOME=$$tmp/cache \
-	  nvim --headless -u NONE -l tests/run.lua integration; rc=$$?; rm -rf $$tmp; exit $$rc
+	@$(HERMETIC) integration; rc=$$?; rm -rf $$tmp; exit $$rc
 
 smoke:
 	@for t in tests/smoke/*.sh; do [ -e "$$t" ] || continue; echo "== $$t"; bash "$$t" || exit 1; done

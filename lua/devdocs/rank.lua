@@ -165,4 +165,29 @@ function M.decisive(hits)
   return a.score - b.score >= 15
 end
 
+local QUALIFIED = "[%.:]" -- "string.format", "std::cout", "obj:method"
+
+--- True when some hit is an entry named exactly like what is under the cursor:
+--- a qualified candidate ("string.format", "std::cout"), or the first
+--- candidate when it is a bare word ("print", the `vim` heading a chain).
+--- The bare word split off a qualified name does not count: `vim.print` is
+--- not lua's print(), and `vim.fn.insert` is not table.insert().
+--- @param hits DevDocsHit[]
+--- @param candidates string[] as passed to lookup(), most specific first
+--- @return boolean
+function M.exact(hits, candidates)
+  local wanted = {}
+  for i, c in ipairs(candidates) do
+    if i == 1 or c:find(QUALIFIED) then
+      wanted[M.normalize(c)] = true
+    end
+  end
+  for _, h in ipairs(hits) do
+    if wanted[M.normalize(h.entry.name)] then
+      return true
+    end
+  end
+  return false
+end
+
 return M

@@ -82,6 +82,18 @@ M.defaults = {
     -- its project uses); otherwise in the newest version of every doc.
     -- "all": the buffer's docs first, then every installed doc (slow with many docs installed).
     scope = "buffer",
+    -- On :DevDocs definition / example, tell keywords and builtins from the project's own
+    -- names (LSP semantic tokens, else treesitter): a local variable, parameter or field shows
+    -- vim.lsp.buf.hover() instead of a doc page, and any other name the docs have no entry
+    -- named exactly like (`vim.api.nvim_create_user_command`) shows hover before fuzzy matches
+    -- or `fallback`. Only when an attached client can hover; an empty hover goes on to the
+    -- docs, and a visual selection or an explicit argument always looks up the docs.
+    smart = true,
+    -- With smart: when the word under the cursor has nothing to document (a string, comment or
+    -- number, true/false/nil the docs have no entry for, whitespace or an operator, or a variable or
+    -- function declared in the file that hover has nothing on), a small popup at the cursor says so
+    -- instead of the search picker or a wrong page. false: those go to the docs like any name.
+    explain = true,
   },
 
   list = {
@@ -146,6 +158,8 @@ local function validate(cfg)
   vim.validate("lookup.scope", cfg.lookup.scope, function(v)
     return v == "buffer" or v == "all"
   end, "'buffer' or 'all'")
+  vim.validate("lookup.smart", cfg.lookup.smart, "boolean")
+  vim.validate("lookup.explain", cfg.lookup.explain, "boolean")
   vim.validate("list.release_dates", cfg.list.release_dates, "boolean")
 end
 

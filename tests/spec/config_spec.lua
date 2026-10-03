@@ -26,4 +26,11 @@ describe("config", function()
     config.resolve { notify = false }
     eq(before, config.defaults)
   end)
+
+  it("validates lookup.smart", function()
+    eq(true, config.resolve().lookup.smart)
+    eq(false, config.resolve({ lookup = { smart = false } }).lookup.smart)
+    ok(not pcall(config.resolve, { lookup = { smart = "yes" } }), "accepted a non-boolean lookup.smart")
+    config.resolve()
+  end)
 end)

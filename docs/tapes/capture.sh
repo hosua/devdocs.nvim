@@ -4,9 +4,9 @@
 #   DEVDOCS_SRC=~/.local/share/nvim/devdocs DEVDOCS_LAZY=~/.local/share/nvim/lazy \
 #     bash docs/tapes/capture.sh [shot...]
 #
-# Shots: lookup-demo list-demo viewer-paging (GIFs), examples search apply
-# health help (PNGs; `help` writes viewer-help.png, `paging` writes the
-# viewer-paging GIF); default: all.
+# Shots: lookup-demo list-demo viewer-paging explain-popup (GIFs), examples
+# search apply health help explain-png (PNGs; `help` writes viewer-help.png);
+# default: all.
 # DEVDOCS_SRC is only read: manifest.json, releases/ and a few docs are copied
 # into /tmp/devdocs-demo, together with this commit of the plugin
 # (git archive), so the frames show /tmp/devdocs-demo paths and nothing from
@@ -20,7 +20,7 @@ DPY=${DEMO_DISPLAY:-:99}
 OUT=$PWD/docs/media
 SLUGS=(cpp 'lua~5.4' 'lua~5.1' 'python~3.12' 'python~3.13' css javascript node)
 shots=("$@")
-[ ${#shots[@]} -eq 0 ] && shots=(lookup-demo list-demo viewer-paging examples search apply health help)
+[ ${#shots[@]} -eq 0 ] && shots=(lookup-demo list-demo viewer-paging examples search apply health help explain-popup explain-png)
 
 rm -rf -- "$DEMO"
 mkdir -p "$DEMO"/{repo,data/docs,home,work,xdg/{config,data,state,cache}} "$OUT"
@@ -40,8 +40,14 @@ int main() {
   return 0;
 }
 EOF
-
 cat >"$DEMO/work/demo.lua" <<'EOF'
+-- Greet the user
+local greeting = "Hello, DevDocs"
+local count = 42
+print(greeting, count)
+EOF
+
+cat >"$DEMO/work/paging.lua" <<'EOF'
 local function parse(s)
   local n = assert(tonumber(s), "not a number")
   return n
@@ -121,7 +127,7 @@ for s in "${shots[@]}"; do
     keys p && sleep 2.2
     keys q && stop_rec ;;
   viewer-paging) # assert opens paginated; n turns the page, c a chapter, p toggles whole/paginated
-    start demo.lua && rec viewer-paging
+    start paging.lua && rec viewer-paging
     keys 2 G && sleep 0.4 && keys 0 1 2 l && sleep 0.6
     slow ':DevDocs definition' && keys Return && sleep 2.4
     keys n && sleep 1.6
@@ -150,6 +156,20 @@ for s in "${shots[@]}"; do
     start main.cpp && keys 6 G 0 7 l && cmd ':DevDocs definition' && sleep 1.5 && keys question && shot viewer-help 1.2 ;;
   health)
     start main.cpp && cmd ':checkhealth devdocs' && shot checkhealth 2 ;;
+  explain-popup) # print opens the docs; a local, a string and a comment get the popup
+    start demo.lua && rec explain-popup
+    keys 4 G 0 && sleep 0.4
+    typ ':DevDocs definition' && keys Return && sleep 2.2
+    keys q && sleep 0.5
+    keys 3 G 0 w && sleep 0.4
+    typ ':DevDocs definition' && keys Return && sleep 2
+    keys 2 G 0 f H && sleep 0.4
+    typ ':DevDocs definition' && keys Return && sleep 2
+    keys 1 G 0 w && sleep 0.4
+    typ ':DevDocs definition' && keys Return && sleep 2
+    stop_rec ;;
+  explain-png) # the popup on a string literal
+    start demo.lua && keys 2 G 0 f H && cmd ':DevDocs definition' && shot explain-popup 1.2 ;;
   *) echo "unknown shot: $s" >&2; exit 2 ;;
   esac
 done
