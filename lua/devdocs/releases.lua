@@ -251,6 +251,32 @@ function M.match(cycles, doc)
   return nil
 end
 
+--- The doc to date for an installed slug: the installed release, not the
+--- docs list's. meta.json's `version` is its own schema version (1), so the
+--- doc version is meta.doc_version; merging meta over the doc wholesale
+--- would date every installed doc as cycle "1". Returns a new table.
+--- @param doc DevDocsDoc|nil manifest entry (nil when the list dropped it)
+--- @param meta table|nil installed meta.json
+--- @param slug string|nil when `doc` is nil
+--- @return table
+function M.installed_doc(doc, meta, slug)
+  if type(meta) ~= "table" then
+    return doc
+  end
+  local out = vim.deepcopy(doc or {})
+  out.slug = out.slug or slug
+  out.name = out.name or meta.name
+  out.type = out.type or meta.type
+  if meta.doc_version ~= nil then
+    out.version = meta.doc_version
+  end
+  if (meta.release or "") ~= "" then
+    out.release = meta.release
+  end
+  out.mtime = meta.mtime or out.mtime
+  return out
+end
+
 --- Products index response -> { name or alias -> product }.
 --- @param json any decoded https://endoflife.date/api/v1/products
 --- @return table<string, string>

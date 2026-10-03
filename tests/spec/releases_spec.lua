@@ -139,6 +139,38 @@ describe("releases", function()
     end)
   end)
 
+  describe("installed_doc", function()
+    local node = cycles_of "nodejs"
+    -- meta.json carries `version` = its own schema version (1), the doc
+    -- version is meta.doc_version
+    local META = { version = 1, doc_version = "22 LTS", release = "22.20.0", name = "Node.js", type = "node" }
+
+    it("dates an installed doc by meta.doc_version / meta.release, never meta.version", function()
+      local d = releases.installed_doc(doc("node~22_lts", "22 LTS", "22.23.0"), META)
+      eq("22 LTS", d.version)
+      eq("22.20.0", d.release)
+      eq("node~22_lts", d.slug)
+      eq("22", releases.match(node, d).cycle)
+      local current = releases.installed_doc(
+        doc("node", "", "26.3.1"),
+        { version = 1, doc_version = "", release = "26.3.1", name = "Node.js" }
+      )
+      eq("26", releases.match(node, current).cycle)
+    end)
+
+    it("builds a doc from meta alone for a slug the docs list dropped", function()
+      local d = releases.installed_doc(nil, META, "node~22_lts")
+      eq({ "node~22_lts", "22 LTS", "22.20.0", "Node.js", "node" }, { d.slug, d.version, d.release, d.name, d.type })
+    end)
+
+    it("keeps the manifest doc when there is no meta, without mutating it", function()
+      local m = doc("node~22_lts", "22 LTS", "22.23.0")
+      eq(m, releases.installed_doc(m, nil))
+      releases.installed_doc(m, META)
+      eq("22.23.0", m.release)
+    end)
+  end)
+
   describe("product_for", function()
     it("uses the static table, then the products index by name, alias or dashes", function()
       eq("nodejs", releases.product_for "node")

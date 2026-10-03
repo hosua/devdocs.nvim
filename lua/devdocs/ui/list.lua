@@ -70,6 +70,11 @@ local function draw()
   if #r.rows > 0 then
     pcall(vim.api.nvim_win_set_cursor, ui.float.win, { math.min(render.cursor_line(ui.state), #r.lines), 0 })
   end
+  -- render emits only the rows that fit, so the buffer always starts at the
+  -- top; a window that shrank (VimResized) scrolled the header out of view
+  vim.api.nvim_win_call(ui.float.win, function()
+    vim.fn.winrestview { topline = 1 }
+  end)
   -- pending marks are unsaved changes, oil.nvim style: :w applies them
   vim.bo[ui.float.buf].modified = selection.count(ui.state.marked) > 0
 end
@@ -106,11 +111,11 @@ local function load_release_dates()
   local docs, seen = {}, {}
   for _, d in ipairs(ui.state.docs or {}) do
     seen[d.slug] = true
-    docs[#docs + 1] = type(installed[d.slug]) == "table" and vim.tbl_extend("force", d, installed[d.slug]) or d
+    docs[#docs + 1] = releases.installed_doc(d, installed[d.slug])
   end
   for slug, meta in pairs(installed) do
     if not seen[slug] and type(meta) == "table" then
-      docs[#docs + 1] = vim.tbl_extend("force", meta, { slug = slug })
+      docs[#docs + 1] = releases.installed_doc(nil, meta, slug)
     end
   end
   releases.dates_for(docs, function(map)
