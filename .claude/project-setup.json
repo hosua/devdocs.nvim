@@ -76,6 +76,12 @@
         "docs/tapes/capture.sh",
         "docs/tapes/minimal_init.lua"
       ]
+    },
+    "readme": {
+      "status": "disabled",
+      "decided": "2026-10-03",
+      "notes": "user declined a full rewrite (2026-10-03); targeted edits only: changelog table, screenshots, dependencies/install/configurations",
+      "files": []
     }
   }
 }
