@@ -29,6 +29,11 @@ describe("explain.message", function()
     eq({ "Nothing under the cursor to look up." }, msg { class = "trivial", kind = "whitespace", word = "" })
   end)
 
+  it("still says what a literal is when its text is unknown (never a silent lookup)", function()
+    eq({ "This is a string literal: nothing to document." }, msg { class = "trivial", kind = "string", word = "" })
+    eq({ "This is an operator: nothing to document." }, msg { class = "trivial", kind = "operator" })
+  end)
+
   it("describes names declared in the buffer", function()
     eq(
       { "count is a local variable (declared on line 12): no documentation.", 0, 5 },
@@ -50,7 +55,6 @@ describe("explain.message", function()
     eq({}, msg { class = "keyword", word = "return" })
     eq({}, msg { class = "builtin", word = "print" })
     eq({}, msg { class = "unknown", word = "foo" })
-    eq({}, msg { class = "trivial", kind = "string", word = "" })
   end)
 end)
 

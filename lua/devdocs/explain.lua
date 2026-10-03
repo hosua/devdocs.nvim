@@ -53,9 +53,13 @@ function M.message(target)
       return "Nothing under the cursor to look up."
     end
     local label = LITERAL_LABELS[kind == "nil" and "nil_" or kind]
-    local sub = M.subject(target.word or "")
-    if not label or sub == "" then
+    if not label then
       return nil
+    end
+    local sub = M.subject(target.word or "")
+    if sub == "" then
+      -- lookup.lua already chose the popup: say what it is rather than show nothing
+      return ("This is %s: nothing to document."):format(label)
     end
     return ("%s is %s: nothing to document."):format(sub, label), 0, #sub
   end

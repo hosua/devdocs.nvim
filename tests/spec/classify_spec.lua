@@ -537,6 +537,44 @@ describe("classify.target (treesitter, lua)", function()
     eq("trivial", at(buf, 1, "DevDocs"))
     eq("variable", at(buf, 4, "arg"))
   end)
+
+  it("does not call a name inside a string capture a literal when its own capture is code", function()
+    -- JS `${x}` / Python f"{x}": the highlights query captures the whole
+    -- template as @string and the substitution's name as @variable. Simulate
+    -- it with lua: a query that also captures call arguments as @string.
+    local files = vim.treesitter.query.get_files("lua", "highlights")
+    local src = {}
+    for _, f in ipairs(files) do
+      src[#src + 1] = table.concat(vim.fn.readfile(f), "\n")
+    end
+    local orig = table.concat(src, "\n")
+    vim.treesitter.query.set("lua", "highlights", orig .. "\n(arguments) @string\n")
+    local done, err = pcall(function()
+      local t = target_col(buf, 11, 9) -- the n of `print(M, n)`
+      ok(t.class ~= "trivial", "n in print(M, n): " .. vim.inspect(t))
+      expect({ class = "variable", kind = "local", word = "n", decl_line = 2 }, t, "n")
+    end)
+    vim.treesitter.query.set("lua", "highlights", orig)
+    assert(done, err)
+  end)
+
+  it("looks up declarations only for names a popup or hover may cover", function()
+    local orig = classify.locals_query
+    local calls = 0
+    classify.locals_query = function(...)
+      calls = calls + 1
+      return orig(...)
+    end
+    local done, err = pcall(function()
+      eq("builtin", target(buf, 11, "print").class)
+      eq("keyword", target(buf, 3, "function").class)
+      eq(0, calls, "locals query runs for builtins and keywords")
+      eq(3, target(buf, 4, "arg").decl_line)
+      ok(calls > 0, "locals query runs for a variable")
+    end)
+    classify.locals_query = orig
+    assert(done, err)
+  end)
 end)
 
 describe("classify.target (treesitter, c)", function()
@@ -544,6 +582,10 @@ describe("classify.target (treesitter, c)", function()
 
   it("keeps an #include header out of the trivial strings", function()
     ok(target(buf, 1, "stdio").class ~= "trivial")
+  end)
+
+  it("reads the # of a preprocessor directive as part of the directive, not an operator", function()
+    expect({ class = "keyword", word = "#include" }, target(buf, 1, "#"))
   end)
 
   it("reads builtin types, keywords and NULL", function()
@@ -637,15 +679,20 @@ describe("classify.target without a parser", function()
     pcall(vim.cmd, "syntax enable") -- headless `-l` raises E495 from a BufReadPost autocmd but still enables it
     local buf = vim.api.nvim_create_buf(false, true)
     vim.api.nvim_buf_set_name(buf, vim.fn.tempname() .. ".py") -- named: other BufEnter autocmds choke on E495 otherwise
-    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'x = "hi there"  # note', "y = 42 + z" })
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'x = "hi there"  # note', "y = 42 + z", 'w = f"a {name} b"' })
     vim.api.nvim_set_current_buf(buf)
     vim.bo[buf].filetype = "python"
     local done, err = pcall(function()
-      expect({ class = "trivial", kind = "string" }, target(buf, 1, "there"))
+      -- the word is the whole :syntax run (quotes included), not the word under the cursor
+      expect({ class = "trivial", kind = "string", word = '"hi there"' }, target(buf, 1, "there"))
+      expect({ class = "trivial", kind = "string", word = '"hi there"' }, target(buf, 1, '"'))
       expect({ class = "trivial", kind = "comment" }, target(buf, 1, "note"))
-      expect({ class = "trivial", kind = "number" }, target(buf, 2, "42"))
+      expect({ class = "trivial", kind = "number", word = "42" }, target(buf, 2, "42"))
       expect({ class = "trivial", kind = "operator", word = "+" }, target(buf, 2, "+"))
       ok(target(buf, 2, "z").class ~= "trivial")
+      -- code inside an f-string is not part of the literal; the text around it is
+      ok(target(buf, 3, "name").class ~= "trivial", 'name in f"{name}"')
+      expect({ class = "trivial", kind = "string" }, target(buf, 3, "a {"))
     end)
     -- do not leak :syntax, or the autocmds it brings (a BufEnter one raises E495 on nameless buffers), into later specs
     pcall(vim.cmd, "syntax off")
@@ -736,6 +783,18 @@ describe("classify.semantic_literal / syntax_literal", function()
   end)
 
   it("maps the first literal syntax group of a link chain", function()
+    for _, g in ipairs {
+      "javaScriptEmbed",
+      "jsTemplateExpression",
+      "pythonFStringField",
+      "rubyInterpolation",
+      "shCommandSub",
+    } do
+      ok(classify.syntax_code_in_string(g), g)
+    end
+    for _, g in ipairs { "pythonString", "javaScriptStringT", "Comment", "cFormat" } do
+      ok(not classify.syntax_code_in_string(g), g)
+    end
     eq("number", classify.syntax_literal { "pythonNumber", "Number", "Constant" })
     eq("string", classify.syntax_literal { "pythonString", "String", "Constant" })
     eq("string", classify.syntax_literal { "cCharacter", "Character" })
@@ -756,5 +815,19 @@ describe("classify.nonword_kind", function()
     eq({ "operator", ".." }, { classify.nonword_kind("a..b", 1) })
     eq({ "punctuation", "." }, { classify.nonword_kind("a.b", 1) })
     eq({ "operator", "#" }, { classify.nonword_kind("#t", 0) })
+  end)
+end)
+
+describe("classify.innermost_captures", function()
+  it("drops literal captures when the innermost captured node is code", function()
+    eq({ "variable" }, classify.innermost_captures({ "string", "variable" }, { 15, 1 })) -- JS `${x}`
+    eq({ "punctuation.special" }, classify.innermost_captures({ "string", "punctuation.special" }, { 15, 2 }))
+  end)
+
+  it("keeps them when the innermost node is the literal itself", function()
+    eq({ "string", "spell" }, classify.innermost_captures({ "string", "spell" }, { 9, 9 }))
+    eq({ "string", "string.escape" }, classify.innermost_captures({ "string", "string.escape" }, { 9, 2 }))
+    eq({ "string.special.path" }, classify.innermost_captures({ "string.special.path" }, { 7 }))
+    eq({}, classify.innermost_captures({}, {}))
   end)
 end)

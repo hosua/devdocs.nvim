@@ -123,6 +123,8 @@ local OPERATOR_CHARS = "[%+%-%*/%%=<>!&|%^~%?#]"
 local SEMANTIC_LITERALS = { comment = "comment", string = "string", regexp = "string", number = "number" }
 local SYNTAX_LITERALS =
   { Comment = "comment", String = "string", Character = "string", Number = "number", Float = "number" }
+--- Parts of `:syntax` group names that mark code embedded in a string.
+local SYNTAX_CODE_IN_STRING = { "Embed", "Interp", "Subst", "Expression", "CommandSub", "Deref", "StringField" }
 local SEMANTIC_KIND = {
   variable = "variable",
   parameter = "parameter",
@@ -154,6 +156,9 @@ local LOCAL_SCOPE = {
   c = { compound_statement = true },
   cpp = { compound_statement = true },
 }
+--- Classes whose declaration line and kind matter (lookup.lua's popup and
+--- hover); keywords, builtins and library names never look for one.
+local NEEDS_DECLARATION = { variable = true, symbol = true, unknown = true }
 
 --- Identifier bytes: ASCII word characters and every byte of a multibyte
 --- UTF-8 character, so `café` stays one word.
@@ -307,6 +312,21 @@ function M.syntax_literal(names)
   return nil
 end
 
+--- Whether a `:syntax` group name is code embedded in a string: JS
+--- javaScriptEmbed / jsTemplateExpression, Python pythonFStringField /
+--- pythonStrInterpRegion, Ruby rubyInterpolation, shell shCommandSub /
+--- shDerefSimple.
+--- @param name string
+--- @return boolean
+function M.syntax_code_in_string(name)
+  for _, part in ipairs(SYNTAX_CODE_IN_STRING) do
+    if name:find(part, 1, true) then
+      return true
+    end
+  end
+  return false
+end
+
 --- What a position that is not on an identifier holds.
 --- @param line string
 --- @param col integer 0-based byte
@@ -442,21 +462,55 @@ end
 --- Highlight capture names covering (row, col), from the highlights query;
 --- independent of whether highlighting is enabled.
 --- @param ltree vim.treesitter.LanguageTree
---- @return string[]
+--- @return string[] names
+--- @return integer[] sizes byte length of each capture's node
 local function captures(ltree, bufnr, row, col)
   local q_ok, query = pcall(vim.treesitter.query.get, ltree:lang(), "highlights")
   if not q_ok or not query then
-    return {}
+    return {}, {}
   end
-  local names = {}
+  local names, sizes = {}, {}
   for _, tstree in ipairs(ltree:trees()) do
     for id, node in query:iter_captures(tstree:root(), bufnr, row, row + 1) do
       if vim.treesitter.is_in_node_range(node, row, col) then
+        local _, _, sb = node:start()
+        local _, _, eb = node:end_()
         names[#names + 1] = query.captures[id]
+        sizes[#sizes + 1] = eb - sb
       end
     end
   end
-  return names
+  return names, sizes
+end
+
+--- Capture names without the literal ones (@string, @comment, @number) when
+--- the innermost captured node is not a literal: the `x` of JS `${x}` or
+--- Python f"{x}" sits inside a template captured as @string, but its own
+--- node is captured as code.
+--- @param names string[]
+--- @param sizes integer[]
+--- @return string[]
+function M.innermost_captures(names, sizes)
+  local min
+  for _, size in ipairs(sizes) do
+    min = (not min or size < min) and size or min
+  end
+  local inner = {}
+  for i, name in ipairs(names) do
+    if sizes[i] == min then
+      inner[#inner + 1] = name
+    end
+  end
+  if M.literal_kind(inner) then
+    return names
+  end
+  local code = {}
+  for _, name in ipairs(names) do
+    if not M.literal_kind { name } then
+      code[#code + 1] = name
+    end
+  end
+  return code
 end
 
 --- Declarations for parsers Neovim ships without a locals query (its runtime
@@ -609,6 +663,27 @@ local function host_literal(parser, bufnr, row, col)
   return { class = "builtin", kind = kind, word = text() }
 end
 
+--- The text of the host-language token at (row, col) when it is one leaf that
+--- starts with a non-word character and holds a word (`#include`, `#define`):
+--- the cursor is on a directive, not an operator. nil otherwise.
+--- @return string|nil
+local function directive_token(parser, bufnr, row, col)
+  local trees = parser:trees()
+  local root = trees[1] and trees[1]:root()
+  if not root then
+    return nil
+  end
+  local ok, node = pcall(root.descendant_for_range, root, row, col, row, col + 1)
+  if not ok or not node or node:child_count() > 0 then
+    return nil
+  end
+  local t_ok, text = pcall(vim.treesitter.get_node_text, node, bufnr)
+  if not t_ok or text:find("\n", 1, true) or is_word_char(text:sub(1, 1)) or not text:find(WORD_CLASS) then
+    return nil
+  end
+  return text
+end
+
 --- Word of a literal found without treesitter: the semantic token's text, else
 --- the identifier under the cursor, "" for a comment.
 local function literal_word(kind, line, col, tok, row)
@@ -630,9 +705,14 @@ local function syntax_kind(row, col)
   if not ok or type(stack) ~= "table" then
     return nil
   end
-  for _, id in ipairs(stack) do
+  -- innermost group first: code embedded in a string (`${x}`, f"{x}") is
+  -- not part of the literal around it
+  for i = #stack, 1, -1 do
     local names = {}
-    local name = vim.fn.synIDattr(id, "name")
+    local name = vim.fn.synIDattr(stack[i], "name")
+    if M.syntax_code_in_string(name) then
+      return nil
+    end
     for _ = 1, 10 do
       if not name or name == "" then
         break
@@ -647,6 +727,24 @@ local function syntax_kind(row, col)
     end
   end
   return nil
+end
+
+--- Longest literal one :syntax run checks per side; a string longer than
+--- this is cut (explain.lua quotes at most 40 characters anyway).
+local SYNTAX_RUN_MAX = 200
+
+--- The text around `col` that :syntax gives the same literal kind (the whole
+--- string, quotes included), so the popup quotes `"hi there"`, not `there`.
+--- @return string
+local function syntax_run(line, row, col, kind)
+  local s, e = col, col
+  while s > 0 and col - s < SYNTAX_RUN_MAX and syntax_kind(row, s - 1) == kind do
+    s = s - 1
+  end
+  while e + 1 < #line and e - col < SYNTAX_RUN_MAX and syntax_kind(row, e + 1) == kind do
+    e = e + 1
+  end
+  return line:sub(s + 1, e + 1)
 end
 
 --- Whether the host-language node at (row, col) is a NOT_LITERAL one.
@@ -671,25 +769,14 @@ local function identifier_target(bufnr, row, s, e, line)
     class, token_type = semantic_pick(tokens, ctx)
   end
   local ltree = language_tree(bufnr, row, s)
-  local def_node, suffix
-  if ltree and not ctx.qualified then
-    local d_ok, node, sfx = pcall(find_definition, ltree, bufnr, word, row)
-    if d_ok then
-      def_node, suffix = node, sfx
-    end
-  end
   local names = {}
   if not class then
     if not ltree then
       class = "unknown"
     else
-      local c_ok, found = pcall(captures, ltree, bufnr, row, s)
-      names = c_ok and found or {}
+      local c_ok, found, sizes = pcall(captures, ltree, bufnr, row, s)
+      names = c_ok and M.innermost_captures(found, sizes) or {}
       class = M.from_captures(names, ctx)
-      -- a "variable" must be declared in the buffer, else it may be a library name
-      if class == "variable" and not def_node then
-        class = "symbol"
-      end
     end
   end
   if class == "trivial" and in_not_literal(bufnr, row, s) then
@@ -699,6 +786,19 @@ local function identifier_target(bufnr, row, s, e, line)
   if class == "trivial" then
     local kind = M.literal_kind(names)
     return { class = "trivial", kind = kind, word = kind == "comment" and "" or word }
+  end
+  -- Scanning the buffer's declarations costs a full locals-query pass (about
+  -- 100 ms in a 50k-line file): only names a popup or hover may cover need it.
+  local def_node, suffix
+  if ltree and not ctx.qualified and NEEDS_DECLARATION[class] then
+    local d_ok, node, sfx = pcall(find_definition, ltree, bufnr, word, row)
+    if d_ok then
+      def_node, suffix = node, sfx
+    end
+  end
+  -- a "variable" from highlights must be declared in the buffer, else it may be a library name
+  if class == "variable" and not token_type and not def_node then
+    class = "symbol"
   end
   local kind
   if def_node then
@@ -748,12 +848,17 @@ function M.target_at(bufnr, row, col)
     if bufnr == vim.api.nvim_get_current_buf() then
       kind = syntax_kind(row, col)
       if kind then
-        return { class = "trivial", kind = kind, word = literal_word(kind, line, col, nil, row) }
+        return { class = "trivial", kind = kind, word = kind == "comment" and "" or syntax_run(line, row, col, kind) }
       end
     end
   end
   local s, e = M.word_at(line, col)
   if not s then
+    local directive = parser and directive_token(parser, bufnr, row, col)
+    if directive then
+      -- the `#` of C's `#include`: part of a directive the docs cover, like the word after it
+      return { class = "keyword", word = directive }
+    end
     local kind, text = M.nonword_kind(line, col)
     return { class = "trivial", kind = kind, word = text }
   end
