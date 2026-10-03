@@ -214,6 +214,52 @@ describe("list model", function()
     eq(3, #model.rows(v3)[2].children, "children still carry every version")
   end)
 
+  it("lang rows list the versions that pass the filter in `visible`", function()
+    local rows = model.rows(base)
+    local py = find(rows, "lang", "python")
+    eq(
+      { "python~3.12", "python~3.9", "python~2.7" },
+      vim.tbl_map(function(c)
+        return c.slug
+      end, py.visible)
+    )
+    local f = model.reduce(base, { type = "filter", text = "3.9" })
+    py = find(model.rows(f), "lang", "python")
+    eq(false, py.expanded, "a filter without ~ leaves the language folded")
+    eq(
+      { "python~3.9" },
+      vim.tbl_map(function(c)
+        return c.slug
+      end, py.visible)
+    )
+    eq(3, #py.children, "children still carry every version")
+  end)
+
+  it("expanding the last visible language scrolls its versions into view", function()
+    -- 5 rows tall: [Installed] @css @python @rust [Available]; python is row 3
+    local s = model.reduce(base, { type = "goto", row = 3 })
+    s = vim.tbl_extend("force", s, { height = 3, top = 1 })
+    local e = model.reduce(s, { type = "expand" })
+    eq(3, e.cursor, "cursor stays on the language")
+    eq(3, e.top, "the language row and as many versions as fit")
+    s = vim.tbl_extend("force", s, { height = 5, top = 1 })
+    e = model.reduce(s, { type = "toggle_expand" })
+    eq(2, e.top, "every version fits: the window ends on the last one")
+    eq(6, e.top + e.height - 1)
+    s = vim.tbl_extend("force", s, { height = 20, top = 1 })
+    eq(1, model.reduce(s, { type = "expand" }).top, "no scroll when it all fits already")
+  end)
+
+  it("release_dates merges into the known dates instead of replacing them", function()
+    local s = model.reduce(base, { type = "release_dates", dates = { css = { date = "2026-01-01", exact = true } } })
+    s = model.reduce(s, { type = "release_dates", dates = { rust = { date = "2025-01-01", exact = false } } })
+    eq({ "css", "rust" }, vim.fn.sort(vim.tbl_keys(s.release_dates)))
+    s = model.reduce(s, { type = "release_dates", dates = { css = { date = "2026-02-02", exact = true } } })
+    eq("2026-02-02", s.release_dates.css.date)
+    eq("2025-01-01", s.release_dates.rust.date)
+    eq({}, base.release_dates, "does not mutate the previous state")
+  end)
+
   it("sorts by name or size (installed size, else the newest version's size)", function()
     local s = model.reduce(base, { type = "sort" })
     eq("size", s.sort)

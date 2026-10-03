@@ -72,7 +72,7 @@ One command with subcommands, plus flat aliases for each action.
 | `install [doc]` | `:DevDocsInstall` | docs for the current buffer (right version), or a named doc. `!` reinstalls |
 | `install-all` | `:DevDocsInstallAll` | every doc devdocs offers (asks; `!` skips the question). Already installed docs are skipped |
 | `uninstall <doc>` | `:DevDocsUninstall` | remove a doc (asks; `!` skips) |
-| `prune [lang]` | `:DevDocsPrune` | delete old versions: per language keep only the current one (the docs list's newest when it is installed, else the newest installed) and delete the other installed versions; `lang` limits it to one language. Asks with the full list (`!` skips). A language with one installed version is never touched |
+| `prune [lang]` | `:DevDocsPrune` | delete old versions. Per language it keeps (1) the newest installed version that is enabled, or the newest installed one when every installed version is disabled — versions compare across the docs list and the installed `meta.json`, so an install newer than the docs list is kept — and (2) every installed version a project pins in `projects.json` (the version detected for that project resolves to it); it deletes the other installed versions. `lang` limits it to one language. Asks with the full list and names any pinned versions it kept (`!` skips). A language with one installed version is never touched |
 | `update [doc]` | `:DevDocsUpdate` | reinstall one doc, or every installed doc the docs list shows as newer |
 | `sync` | | install what `import.docs` (or the Mason-derived defaults) asks for |
 | `status` | | running install jobs |
@@ -136,12 +136,12 @@ has. The columns:
 | `}` / `{` | next / previous section |
 | `<Tab>`, `l`, `h` | expand / collapse a language's versions (`h` on a version folds it) |
 | `i` | install the version under the cursor; on a language, its installed current version or the newest |
-| `X` | uninstall (asks); on a language, every installed version; with marks, every marked doc (one question listing them and the space freed) |
-| `m` | mark / unmark the doc under the cursor (on a language: all its installed versions) and move down |
+| `X` | uninstall (asks); on a language, every installed version the filter shows; with marks, every marked doc, including marks the filter hides (one question listing them, the space freed and how many are not shown) |
+| `m` | mark / unmark the doc under the cursor (on a language: its installed versions the filter shows) and move down. Marks survive filter changes; the status line shows `N marked` |
 | `V`/`v` … `m` | mark every doc in the visual selection (again: unmark) |
 | `V`/`v` … `X` or `d` | uninstall the installed docs in the visual selection (asks) |
 | `M` | clear every mark |
-| `D` | delete every installed version of this language except the current one (asks) |
+| `D` | prune this language (asks): keep its newest enabled installed version and any version a project pins, delete the rest; same rule as `:DevDocs prune` |
 | `gD` | the same for every language, like `:DevDocs prune` (asks) |
 | `u` / `U` | update it (a language: its outdated versions) / every outdated doc |
 | `e` | enable / disable it for lookups and search |

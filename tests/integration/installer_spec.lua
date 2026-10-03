@@ -222,6 +222,46 @@ describe("installer (integration)", function()
     eq({ "lua~5.4" }, store.installed())
   end)
 
+  it("prune keeps a version a project pins, and the newest enabled one", function()
+    local projects = require "devdocs.projects"
+    local okv, err = wait_cb(function(cb)
+      installer.install("lua~5.1", { force = true }, cb)
+    end)
+    eq(true, okv, err)
+    eq({ "lua~5.1", "lua~5.4" }, store.installed())
+    local docs = { { slug = "lua~5.4", version = "5.4" }, { slug = "lua~5.1", version = "5.1" } }
+    local function prune()
+      local done
+      require("devdocs").prune {
+        yes = true,
+        docs = docs,
+        on_done = function(n, errors)
+          done = { n, errors }
+        end,
+      }
+      return done
+    end
+    -- a project uses 5.1: nothing is deleted
+    local root = tmpdir()
+    projects.version(root, "lua", function()
+      return "5.1", {}, "file:.lua-version"
+    end)
+    eq(nil, prune())
+    eq({ "lua~5.1", "lua~5.4" }, store.installed())
+    projects.forget()
+    -- the newest (5.4) is disabled: the newest enabled one (5.1) is kept
+    store.update_state(function(st)
+      st.enabled["lua~5.4"] = false
+      return st
+    end)
+    eq({ 1, {} }, prune())
+    eq({ "lua~5.1" }, store.installed())
+    store.update_state(function(st)
+      st.enabled["lua~5.4"] = nil
+      return st
+    end)
+  end)
+
   it("status lists jobs and clear_finished drops the settled ones", function()
     ok(#installer.status() > 0)
     installer.clear_finished()

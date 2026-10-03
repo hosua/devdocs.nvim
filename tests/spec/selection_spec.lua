@@ -214,3 +214,135 @@ describe("selection.confirm_message", function()
     end
   end)
 end)
+
+describe("selection: lang rows under a filter", function()
+  -- model.rows puts the children that pass the filter in `visible`
+  local function filtered(base, children, visible)
+    return vim.tbl_extend("force", lrow(base, children), { visible = visible })
+  end
+
+  it("row_slugs of a lang row takes only its visible installed children", function()
+    local py = { drow("python~3.13", true), drow("python~3.12", true), drow("python~3.9", false) }
+    local row = filtered("python", py, { py[2] })
+    eq({ "python~3.12" }, selection.row_slugs(row))
+    eq({ "python~3.12" }, selection.range_targets({ row }, 1, 1))
+    eq({ ["python~3.12"] = true }, selection.toggle({}, row))
+    -- no `visible` (hand-built rows, no filter): every installed child
+    eq({ "python~3.13", "python~3.12" }, selection.row_slugs(lrow("python", py)))
+  end)
+
+  it("an empty visible list targets nothing", function()
+    local py = { drow("python~3.13", true) }
+    eq({}, selection.row_slugs(filtered("python", py, {})))
+  end)
+end)
+
+describe("selection.hidden", function()
+  it("counts slugs that no row of the current view shows", function()
+    local py = { drow("python~3.13", true), drow("python~3.12", true) }
+    local rows = {
+      { kind = "group", label = "Installed", count = 2 },
+      vim.tbl_extend("force", lrow("python", py), { visible = { py[2] } }),
+      drow("css", true),
+    }
+    eq({ "lua~5.1", "python~3.13" }, selection.hidden({ "css", "lua~5.1", "python~3.12", "python~3.13" }, rows))
+    eq({}, selection.hidden({ "css" }, rows))
+    eq({ "css" }, selection.hidden({ "css" }, {}))
+  end)
+end)
+
+describe("selection.prune_targets: enabled, newer than the manifest, pinned", function()
+  local DOCS = {
+    mdoc("python~3.13", "3.13"),
+    mdoc("python~3.12", "3.12"),
+    mdoc("python~3.9", "3.9"),
+  }
+
+  it("keeps the newest enabled version; a disabled newer one goes", function()
+    local installed = { ["python~3.13"] = {}, ["python~3.12"] = {}, ["python~3.9"] = {} }
+    local slugs = selection.prune_targets(installed, DOCS, nil, { disabled = { ["python~3.13"] = true } })
+    eq({ "python~3.13", "python~3.9" }, slugs)
+  end)
+
+  it("keeps the newest installed version when every one is disabled", function()
+    local installed = { ["python~3.13"] = {}, ["python~3.9"] = {} }
+    local off = { ["python~3.13"] = true, ["python~3.9"] = true }
+    eq({ "python~3.9" }, selection.prune_targets(installed, DOCS, nil, { disabled = off }))
+  end)
+
+  it("keeps an installed version newer than the manifest's newest", function()
+    local installed = { ["python~3.14"] = { doc_version = "3.14" }, ["python~3.13"] = {}, ["python~3.9"] = {} }
+    eq({ "python~3.13", "python~3.9" }, selection.prune_targets(installed, DOCS))
+  end)
+
+  it("never deletes a version a project pins, and reports it as held", function()
+    local installed = { ["python~3.13"] = {}, ["python~3.12"] = {}, ["python~3.9"] = {} }
+    local pinned = { ["python~3.9"] = { "/work/app" }, ["python~3.13"] = { "/work/new" } }
+    local slugs, held = selection.prune_targets(installed, DOCS, nil, { pinned = pinned })
+    eq({ "python~3.12" }, slugs)
+    eq({ "python~3.9" }, held, "the kept newest is not reported as held")
+  end)
+
+  it("does not mutate its inputs", function()
+    local installed = { ["python~3.13"] = {}, ["python~3.9"] = {} }
+    local opts = { disabled = { ["python~3.13"] = true }, pinned = { ["python~3.9"] = { "/a" } } }
+    local before = vim.deepcopy { installed, opts }
+    selection.prune_targets(installed, DOCS, nil, opts)
+    eq(before, { installed, opts })
+  end)
+end)
+
+describe("selection.pinned_slugs", function()
+  local installed = {
+    ["python~3.13"] = { doc_version = "3.13" },
+    ["python~3.12"] = { doc_version = "3.12" },
+    ["python~3.9"] = { doc_version = "3.9" },
+    node = { doc_version = "" },
+    ["node~20_lts"] = { doc_version = "20 LTS" },
+  }
+
+  it("maps each project's pinned version to the installed slug it resolves to", function()
+    local pins = {
+      { root = "/work/a", base = "python", version = "3.12.4" },
+      { root = "/work/b", base = "python", version = "3.12" },
+      { root = "/work/c", base = "python", version = "3.10" }, -- newest not newer: 3.9
+      { root = "/work/d", base = "node", version = "20.11.0" },
+      { root = "/work/e", base = "rust", version = "1.80" }, -- nothing installed
+    }
+    eq({
+      ["python~3.12"] = { "/work/a", "/work/b" },
+      ["python~3.9"] = { "/work/c" },
+      ["node~20_lts"] = { "/work/d" },
+    }, selection.pinned_slugs(installed, {}, pins))
+  end)
+
+  it("pins nothing when no installed version fits (not even the newest fallback)", function()
+    eq({}, selection.pinned_slugs(installed, {}, { { root = "/a", base = "python", version = "2.7" } }))
+    eq({}, selection.pinned_slugs(installed, {}, {}))
+    eq({}, selection.pinned_slugs(installed, {}, nil))
+  end)
+
+  it("uses manifest versions for slugs without meta.doc_version", function()
+    local inst = { ["lua~5.4"] = {}, ["lua~5.1"] = {} }
+    local docs = { mdoc("lua~5.4", "5.4"), mdoc("lua~5.1", "5.1") }
+    eq(
+      { ["lua~5.1"] = { "/x" } },
+      selection.pinned_slugs(inst, docs, { { root = "/x", base = "lua", version = "5.1" } })
+    )
+  end)
+end)
+
+describe("selection.confirm_message notes", function()
+  it("appends extra note lines after the slug list", function()
+    local msg = selection.confirm_message({ "css" }, nil, "/d", { "2 of them are not shown", "kept: x" })
+    local lines = vim.split(msg, "\n")
+    eq("2 of them are not shown", lines[#lines - 1])
+    eq("kept: x", lines[#lines])
+  end)
+
+  it("prune_note names the held slugs and the projects that pin them", function()
+    local note = selection.prune_note({ "python~3.9" }, { ["python~3.9"] = { "/work/app", "/work/b" } })
+    eq("kept (pinned by project /work/app, /work/b): python~3.9", note)
+    eq(nil, selection.prune_note({}, {}))
+  end)
+end)

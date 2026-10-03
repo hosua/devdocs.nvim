@@ -17,7 +17,9 @@ local function copy(marked)
 end
 
 --- Installed slugs a row stands for: a doc row its own slug, a lang row its
---- installed children; nothing for group rows and docs that are not installed.
+--- installed children that pass the filter (`visible`, set by model.rows;
+--- every child when it is absent); nothing for group rows and docs that are
+--- not installed. So X / m on a language never reach a version the filter hides.
 --- @param row table|nil
 --- @return string[]
 function M.row_slugs(row)
@@ -29,7 +31,7 @@ function M.row_slugs(row)
   end
   if row.kind == "lang" then
     local out = {}
-    for _, c in ipairs(row.children or {}) do
+    for _, c in ipairs(row.visible or row.children or {}) do
       if c.kind == "doc" and c.meta then
         out[#out + 1] = c.slug
       end
@@ -113,6 +115,29 @@ function M.targets(marked)
   return out
 end
 
+--- Slugs (of `slugs`) that no row of the current view shows: not a doc row
+--- and not a visible child of a lang row. Sorted.
+--- @param slugs string[]
+--- @param rows table[] model.rows()
+--- @return string[]
+function M.hidden(slugs, rows)
+  local shown = {}
+  for _, r in ipairs(rows or {}) do
+    if r.kind == "doc" then
+      shown[r.slug] = true
+    elseif r.kind == "lang" then
+      for _, c in ipairs(r.visible or r.children or {}) do
+        shown[c.slug] = true
+      end
+    end
+  end
+  local out = vim.tbl_filter(function(s)
+    return not shown[s]
+  end, slugs or {})
+  table.sort(out)
+  return out
+end
+
 --- @param marked table<string, boolean>|nil
 --- @return integer
 function M.count(marked)
@@ -151,16 +176,28 @@ local function as_set(bases)
   return set
 end
 
---- Installed versions to delete so that every language keeps exactly one:
---- the manifest's newest version of that base (the unversioned slug counts
---- as newest) when it is installed, else the newest installed version. A
---- base with one installed version is never touched, so pruning can not
---- remove a language. Disabled docs are installed docs here.
+local function installed_version(slug, meta, by_slug)
+  local d = by_slug[slug]
+  return (d and d.version) or (meta and meta.doc_version) or slug:match "~(.*)$" or ""
+end
+
+--- Installed versions to delete so that every language keeps one. Per base,
+--- of its installed versions (version strings from the manifest, else
+--- meta.doc_version, else the slug suffix; the unversioned slug is newest):
+---   keep the newest one that is enabled (not in opts.disabled), or the
+---   newest one when every installed version is disabled;
+---   never delete a version in opts.pinned (a project uses it).
+--- A base with one installed version is never touched, so pruning can not
+--- remove a language.
 --- @param installed table<string, table>|nil slug -> meta
 --- @param docs DevDocsDoc[]|nil manifest
 --- @param bases string|string[]|table<string, boolean>|nil only these bases
+--- @param opts { disabled?: table<string, boolean>, pinned?: table<string, string[]> }|nil
 --- @return string[] slugs to delete, sorted
-function M.prune_targets(installed, docs, bases)
+--- @return string[] held pinned slugs that would otherwise go, sorted
+function M.prune_targets(installed, docs, bases, opts)
+  opts = opts or {}
+  local disabled, pinned = opts.disabled or {}, opts.pinned or {}
   local only = as_set(bases)
   local by_slug = manifest.by_slug(docs or {})
 
@@ -168,41 +205,95 @@ function M.prune_targets(installed, docs, bases)
   for slug, meta in pairs(installed or {}) do
     local base = manifest.base(slug)
     if not only or only[base] then
-      local d = by_slug[slug]
-      local version = (d and d.version) or meta.doc_version or slug:match "~(.*)$" or ""
       groups[base] = groups[base] or {}
-      table.insert(groups[base], { slug = slug, version = version })
+      table.insert(groups[base], { slug = slug, version = installed_version(slug, meta, by_slug) })
     end
   end
 
-  local current = {}
-  for _, d in ipairs(docs or {}) do
-    local base = manifest.base(d.slug)
-    if groups[base] then
-      current[base] = current[base] or {}
-      table.insert(current[base], d)
-    end
-  end
-
-  local out = {}
-  for base, versions in pairs(groups) do
+  local out, held = {}, {}
+  for _, versions in pairs(groups) do
     if #versions > 1 then
-      local keep
-      local newest = current[base] and manifest.sort_newest(current[base])[1]
-      if newest and installed[newest.slug] then
-        keep = newest.slug
-      else
-        keep = manifest.sort_newest(versions)[1].slug
+      local sorted = manifest.sort_newest(versions)
+      local keep = sorted[1].slug
+      for _, v in ipairs(sorted) do
+        if not disabled[v.slug] then
+          keep = v.slug
+          break
+        end
       end
-      for _, v in ipairs(versions) do
+      for _, v in ipairs(sorted) do
         if v.slug ~= keep then
-          out[#out + 1] = v.slug
+          local list = pinned[v.slug]
+          if list and (type(list) ~= "table" or #list > 0) then
+            held[#held + 1] = v.slug
+          else
+            out[#out + 1] = v.slug
+          end
         end
       end
     end
   end
   table.sort(out)
+  table.sort(held)
+  return out, held
+end
+
+--- Installed slugs that projects pin: each pin ({ root, base, version }, from
+--- projects.pins()) resolves to the installed version of its base the
+--- project would use (version.pick: same major.minor, else the newest one
+--- not newer). A pin no installed version fits pins nothing.
+--- @param installed table<string, table>|nil slug -> meta
+--- @param docs DevDocsDoc[]|nil manifest
+--- @param pins { root: string, base: string, version: string }[]|nil
+--- @return table<string, string[]> slug -> project roots, sorted
+function M.pinned_slugs(installed, docs, pins)
+  local version = require "devdocs.version"
+  local by_slug = manifest.by_slug(docs or {})
+  local by_base = {}
+  for slug, meta in pairs(installed or {}) do
+    local base = manifest.base(slug)
+    by_base[base] = by_base[base] or {}
+    table.insert(by_base[base], { slug = slug, version = installed_version(slug, meta, by_slug) })
+  end
+  local out = {}
+  for _, pin in ipairs(pins or {}) do
+    local list = by_base[pin.base]
+    local d = list and version.pick(manifest.sort_newest(list), pin.version)
+    if d and d.version ~= "" then
+      local p, want = version.parts(d.version), version.parts(pin.version)
+      local same = p[1] == want[1] and (p[2] == nil or want[2] == nil or p[2] == want[2])
+      if same or manifest.compare_versions(d.version, pin.version) <= 0 then
+        out[d.slug] = out[d.slug] or {}
+        if not vim.tbl_contains(out[d.slug], pin.root) then
+          table.insert(out[d.slug], pin.root)
+        end
+      end
+    end
+  end
+  for _, roots in pairs(out) do
+    table.sort(roots)
+  end
   return out
+end
+
+--- The confirm note for pinned versions prune keeps, or nil when none.
+--- @param held string[]
+--- @param pinned table<string, string[]>
+--- @return string|nil
+function M.prune_note(held, pinned)
+  if not held or #held == 0 then
+    return nil
+  end
+  local roots, seen = {}, {}
+  for _, slug in ipairs(held) do
+    for _, r in ipairs(pinned[slug] or {}) do
+      if not seen[r] then
+        seen[r] = true
+        roots[#roots + 1] = vim.fn.fnamemodify(r, ":~")
+      end
+    end
+  end
+  return ("kept (pinned by project %s): %s"):format(table.concat(roots, ", "), table.concat(held, ", "))
 end
 
 local function size(bytes)
@@ -219,8 +310,9 @@ end
 --- @param slugs string[]
 --- @param bytes number|nil disk usage, nil when unknown
 --- @param dir string the docs directory
+--- @param notes string[]|nil extra lines after the slug list
 --- @return string
-function M.confirm_message(slugs, bytes, dir)
+function M.confirm_message(slugs, bytes, dir, notes)
   local head = ("Delete %d doc%s"):format(#slugs, #slugs == 1 and "" or "s")
   if bytes and bytes > 0 then
     head = head .. (" (%s)"):format(size(bytes))
@@ -239,6 +331,7 @@ function M.confirm_message(slugs, bytes, dir)
   if line ~= "" then
     lines[#lines + 1] = line
   end
+  vim.list_extend(lines, notes or {})
   return table.concat(lines, "\n")
 end
 

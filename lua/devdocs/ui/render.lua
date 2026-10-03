@@ -3,6 +3,7 @@
 --- list of 800 docs scrolls without moving the header. Byte columns
 --- throughout, which is what extmarks and getmousepos() use.
 local model = require "devdocs.ui.model"
+local selection = require "devdocs.ui.selection"
 
 local M = {}
 
@@ -159,8 +160,9 @@ function M.released(state, row)
   return ""
 end
 
---- Mark column: ● marked; on a language ● when every installed version (or
---- every version, if none is installed) is marked, ◐ when only some are.
+--- Mark column: ● marked; on a language ● when every installed version the
+--- filter shows (or every shown version, if none is installed) is marked,
+--- ◐ when only some of its versions are.
 --- @param state DevDocsListState
 --- @param row DevDocsListRow
 --- @return string
@@ -169,11 +171,12 @@ function M.mark(state, row)
   if row.kind ~= "lang" then
     return marked[row.slug] and "●" or ""
   end
+  local shown = row.visible or row.children
   local pool = vim.tbl_filter(function(c)
     return c.meta ~= nil
-  end, row.children)
+  end, shown)
   if #pool == 0 then
-    pool = row.children
+    pool = shown
   end
   local n, any = 0, false
   for _, c in ipairs(row.children) do
@@ -223,7 +226,7 @@ end
 --- @param width integer
 --- @return table { mark, icon, name, version, size, released, pages, note: integer, at: table<string, integer> }
 function M.columns(width)
-  local c = { mark = 2, icon = 2, version = 16, size = 8, released = 11, pages = 5 }
+  local c = { mark = 2, icon = 2, version = 18, size = 8, released = 11, pages = 5 }
   c.name = math.max(14, math.min(28, math.floor(width * 0.25)))
   local fixed = c.mark + c.icon + c.name + 1 + c.version + 1 + c.size + 1 + c.released + 1 + c.pages + 1
   c.note = math.max(8, width - fixed)
@@ -329,14 +332,26 @@ function M.render(state)
     right = ("filter: %s  %s"):format(state.filter, right)
   end
   local left = " DevDocs  " .. status
+  local status_end = #left
+  -- marks survive filter changes, so say they exist even when none is shown
+  local nmarked = selection.count(state.marked)
+  local marks_at
+  if nmarked > 0 then
+    left = left .. " · "
+    marks_at = #left
+    left = left .. ("%d marked"):format(nmarked)
+  end
   local pad = width - vim.fn.strdisplaywidth(left) - vim.fn.strdisplaywidth(right) - 1
   lines[1] = left .. string.rep(" ", math.max(1, pad)) .. right
   spans[#spans + 1] = { row = 1, col_start = 0, col_end = #" DevDocs ", hl = "DevDocsHeader" }
   if state.error then
-    spans[#spans + 1] = { row = 1, col_start = #" DevDocs  ", col_end = #left, hl = "DevDocsError" }
+    spans[#spans + 1] = { row = 1, col_start = #" DevDocs  ", col_end = status_end, hl = "DevDocsError" }
+  end
+  if marks_at then
+    spans[#spans + 1] = { row = 1, col_start = marks_at, col_end = #left, hl = "DevDocsMark" }
   end
   lines[2] = M.cell(
-    " i install  X delete  m mark  D prune  u update  e enable  ⏎ open  Tab/l/h versions  / filter  ? help  q",
+    " i install  X delete  m/M mark/clear  D prune  u update  e enable  ⏎ open  Tab/l/h versions  / filter  ? help  q",
     width
   )
   spans[#spans + 1] = { row = 2, col_start = 0, col_end = #lines[2], hl = "DevDocsDim" }
@@ -380,6 +395,36 @@ function M.cursor_line(state)
   return M.HEADER_LINES + (state.cursor - state.top) + 1
 end
 
+--- Row index shown on buffer line `line` (1-based), clamped to the rows
+--- drawn in the window; nil for a header line or when there are no rows.
+--- @param state DevDocsListState
+--- @param nrows integer #model.rows(state)
+--- @param line integer
+--- @return integer|nil
+function M.line_to_row(state, nrows, line)
+  if nrows <= 0 or line <= M.HEADER_LINES then
+    return nil
+  end
+  local last = math.min(nrows, state.top + math.max(1, state.height) - 1)
+  return math.max(state.top, math.min(state.top + line - M.HEADER_LINES - 1, last))
+end
+
+--- Row indexes of a visual selection between buffer lines `a` and `b` (in
+--- that order). A header endpoint snaps to the first row; a selection made
+--- only of header lines selects nothing (nil).
+--- @param state DevDocsListState
+--- @param nrows integer
+--- @param a integer
+--- @param b integer
+--- @return integer|nil from, integer|nil to
+function M.visual_range(state, nrows, a, b)
+  if nrows <= 0 or (a <= M.HEADER_LINES and b <= M.HEADER_LINES) then
+    return nil
+  end
+  local first = M.HEADER_LINES + 1
+  return M.line_to_row(state, nrows, math.max(a, first)), M.line_to_row(state, nrows, math.max(b, first))
+end
+
 M.HELP = {
   "DevDocs manager keys",
   "",
@@ -389,7 +434,8 @@ M.HELP = {
   "  l / h        expand / collapse; h on a version folds its language",
   "  i            install the version under the cursor; on a language,",
   "               its installed current version or else the newest",
-  "  X            uninstall it (asks first); on a language, every version",
+  "  X            uninstall it (asks first); on a language, every installed",
+  "               version the filter shows",
   "  u            update it (a language: its outdated versions);",
   "               U updates every outdated doc",
   "  e            enable / disable it for lookups and search",
@@ -398,12 +444,14 @@ M.HELP = {
   "  r            refresh the docs list from devdocs.io",
   "  A            install every doc (asks first)",
   "",
-  "  m            mark / unmark the doc (or every version of a language), move down",
+  "  m            mark / unmark the doc (or the shown versions of a language)",
   "  V … m        mark every doc in a visual selection (again: unmark)",
-  "  M            clear every mark",
-  "  X            with marks: delete every marked doc (asks first, lists them)",
+  "  M            clear every mark; the status line shows how many are marked",
+  "  X            with marks: delete every marked doc (asks first, lists them",
+  "               and says how many the filter hides; marks outlive filters)",
   "  V … X, V … d delete the installed docs in a visual selection (asks first)",
-  "  D            delete every installed version of this language but the current",
+  "  D            prune this language: keep its newest enabled installed",
+  "               version and any version a project pins, delete the rest",
   "  gD           the same for every language (:DevDocs prune)",
   "  ?            this help;  q closes",
   "",

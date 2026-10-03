@@ -8,6 +8,7 @@ local installer = require "devdocs.installer"
 local manifest = require "devdocs.manifest"
 local model = require "devdocs.ui.model"
 local paths = require "devdocs.paths"
+local projects = require "devdocs.projects"
 local releases = require "devdocs.releases"
 local render = require "devdocs.ui.render"
 local selection = require "devdocs.ui.selection"
@@ -92,7 +93,8 @@ local function visible_rows()
 end
 
 --- Upstream release dates (endoflife.date) for every listed and installed doc,
---- into state.release_dates: once from cache, again when fresh data arrives.
+--- merged into state.release_dates: once from cache, again when fresh data
+--- arrives. Merged, so a slower call that saw fewer docs never drops dates.
 --- An installed doc is dated by its installed release, not the manifest's.
 local function load_release_dates()
   if not ui then
@@ -111,7 +113,7 @@ local function load_release_dates()
   end
   releases.dates_for(docs, function(map)
     if ui then
-      dispatch { type = "data", data = { release_dates = map } }
+      dispatch { type = "release_dates", dates = map }
     end
   end)
 end
@@ -151,33 +153,6 @@ local function do_install(row, force)
   refresh_data()
 end
 
---- X: one version, or on a language row every installed version, after one
---- confirm that lists the directories it deletes.
-local function do_uninstall(row)
-  local victims = row.kind == "lang"
-      and vim.tbl_filter(function(c)
-        return c.meta ~= nil
-      end, row.children)
-    or { row }
-  if #victims == 0 or not victims[1].meta then
-    notify((row.slug or row.base) .. " is not installed")
-    return
-  end
-  local dirs = vim.tbl_map(function(v)
-    return paths.doc_dir(v.slug)
-  end, victims)
-  if not float.confirm(("Delete %s?"):format(table.concat(dirs, "\n"))) then
-    return
-  end
-  for _, v in ipairs(victims) do
-    local ok, err = installer.uninstall(v.slug)
-    if not ok then
-      notify(err, vim.log.levels.ERROR)
-    end
-  end
-  refresh_data()
-end
-
 --- u: reinstall a version; on a language row, its outdated versions (or its
 --- target when none is outdated).
 local function do_update(row)
@@ -201,9 +176,12 @@ local function do_update(row)
   refresh_data()
 end
 
---- Delete several docs after one confirm that lists every slug and the
---- disk space it frees. Marks of deleted docs drop out on the refresh.
-local function do_uninstall_many(slugs)
+--- Every delete in the manager goes through here: one confirm that lists
+--- every slug, the disk space it frees and the docs dir (plus `notes`), then
+--- installer.uninstall_many. Marks of deleted docs drop out on the refresh.
+--- @param slugs string[]
+--- @param notes string[]|nil extra confirm lines
+local function do_uninstall_many(slugs, notes)
   local present = vim.tbl_filter(function(s)
     return ui.state.installed[s] ~= nil
   end, slugs)
@@ -211,7 +189,8 @@ local function do_uninstall_many(slugs)
     notify "nothing installed to delete"
     return
   end
-  if not float.confirm(selection.confirm_message(present, installer.disk_usage(present), paths.docs_dir())) then
+  local msg = selection.confirm_message(present, installer.disk_usage(present), paths.docs_dir(), notes)
+  if not float.confirm(msg) then
     return
   end
   local n, errors = installer.uninstall_many(present)
@@ -228,49 +207,59 @@ local function cursor_row()
   return ui and model.rows(ui.state)[ui.state.cursor] or nil
 end
 
---- X: the marked docs when there are marks, else the row under the cursor.
+--- X: the marked docs when there are marks (the confirm says how many of
+--- them the current view hides), else the row under the cursor: a version,
+--- or a language's installed versions that the filter shows.
 local function do_uninstall_selection()
   local marked = selection.targets(ui.state.marked)
   if #marked > 0 then
-    do_uninstall_many(marked)
+    local hidden = selection.hidden(marked, model.rows(ui.state))
+    local notes = nil
+    if #hidden > 0 then
+      local why = ui.state.filter ~= "" and (" (filter: %s)"):format(ui.state.filter) or ""
+      notes = { ("%d of them %s not shown in the current view%s"):format(#hidden, #hidden == 1 and "is" or "are", why) }
+    end
+    do_uninstall_many(marked, notes)
     return
   end
   local row = current_row()
-  if row then
-    do_uninstall(row)
+  if not row then
+    return
   end
-end
-
---- Delete every installed version but the current one, of one base or all.
---- @param base string|nil
-local function do_prune(base)
-  local slugs = selection.prune_targets(ui.state.installed, ui.state.docs, base)
+  local slugs = selection.row_slugs(row)
   if #slugs == 0 then
-    notify(
-      base and ("%s has at most one installed version; nothing to prune"):format(base)
-        or "every language has at most one installed version; nothing to prune"
-    )
+    notify((row.slug or row.base) .. " is not installed")
     return
   end
   do_uninstall_many(slugs)
 end
 
---- Row indexes of the visual selection, clamped to the rendered rows, and
---- leaves visual mode. Buffer lines map to rows through HEADER_LINES + top.
+--- Prune one base or all: keep the newest enabled installed version and
+--- every version a project pins (selection.prune_targets), delete the rest.
+--- @param base string|nil
+local function do_prune(base)
+  local pinned = selection.pinned_slugs(ui.state.installed, ui.state.docs, projects.pins())
+  local slugs, held =
+    selection.prune_targets(ui.state.installed, ui.state.docs, base, { disabled = ui.state.disabled, pinned = pinned })
+  local note = selection.prune_note(held, pinned)
+  if #slugs == 0 then
+    local msg = base and ("%s: nothing to prune"):format(base) or "nothing to prune"
+    notify(note and (msg .. "; " .. note) or msg)
+    return
+  end
+  do_uninstall_many(slugs, note and { note } or nil)
+end
+
+--- Row indexes of the visual selection (render.visual_range: clamped to the
+--- drawn rows, nil when only header lines are selected), and leaves visual mode.
 --- @return integer|nil from, integer|nil to
 local function visual_rows()
   local a, b = vim.fn.line "v", vim.fn.line "."
   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "nx", false)
-  if not ui or not ui.render or #ui.render.rows == 0 then
+  if not ui or not ui.render then
     return nil, nil
   end
-  local first = render.HEADER_LINES + 1
-  local last = #ui.render.lines
-  local function to_row(line)
-    line = math.max(first, math.min(line, last))
-    return ui.state.top + line - first
-  end
-  return to_row(a), to_row(b)
+  return render.visual_range(ui.state, #ui.render.rows, a, b)
 end
 
 local function do_update_all()

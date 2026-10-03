@@ -114,6 +114,25 @@ function M.version(root, base, compute)
   return v, source
 end
 
+--- Every version a project pins: one entry per project dir and base with a
+--- detected version. Records whose fingerprinted files changed are dropped
+--- first, like a lookup would. Tool versions are not pins. Used by prune to
+--- keep the versions projects use.
+--- @return { root: string, base: string, version: string }[]
+function M.pins()
+  load()
+  local out = {}
+  for _, root in ipairs(vim.tbl_keys(data.roots)) do
+    local rec = fresh_root(root)
+    for base, hit in pairs(rec and rec.bases or {}) do
+      if type(hit) == "table" and type(hit.v) == "string" and hit.v ~= "" then
+        out[#out + 1] = { root = root, base = base, version = hit.v }
+      end
+    end
+  end
+  return out
+end
+
 --- Version of the tool at path `exe`: cached while the binary is unchanged.
 --- @param exe string absolute path (vim.fn.exepath)
 --- @param compute fun(): string|nil

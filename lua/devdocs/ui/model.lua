@@ -32,6 +32,7 @@ local M = {}
 --- @field base string|nil        lang/doc: "python"
 --- @field name string|nil        lang: display name ("Python")
 --- @field children DevDocsListRow[]|nil  lang: every version, newest first
+--- @field visible DevDocsListRow[]|nil   lang: the children that pass the filter (all without one)
 --- @field expanded boolean|nil   lang: versions shown below it (false when there is only one)
 --- @field installed_count integer|nil  lang
 --- @field installed_size integer|nil   lang: sum of the installed versions' db_size
@@ -256,6 +257,7 @@ function M.rows(state)
       return matches(state.filter, c.doc)
     end, lang.children)
     if #visible > 0 then
+      lang.visible = visible
       lang.expanded = #lang.children > 1 and (state.expanded[lang.base] == true or tilde)
       local section = lang.status == "available" and sections.available or sections.installed
       section[#section + 1] = { lang = lang, visible = visible }
@@ -272,7 +274,7 @@ function M.rows(state)
     for _, e in ipairs(entries) do
       out[#out + 1] = e.lang
       if e.lang.expanded then
-        vim.list_extend(out, e.visible)
+        vim.list_extend(out, e.lang.visible)
       end
     end
   end
@@ -407,7 +409,20 @@ local function set_expanded(state, rows, how)
   local s = vim.deepcopy(state)
   s.expanded[lang.base] = want or nil
   local new_rows = M.rows(s)
-  s.cursor = lang_index(new_rows, lang.base) or s.cursor
+  local at = lang_index(new_rows, lang.base)
+  s.cursor = at or s.cursor
+  if want and at then
+    -- scroll so the versions just shown are on screen (as many as fit
+    -- below the language row, which stays visible)
+    local last = at
+    while new_rows[last + 1] and new_rows[last + 1].kind == "doc" do
+      last = last + 1
+    end
+    local h = math.max(1, s.height)
+    if last > s.top + h - 1 then
+      s.top = math.min(at, last - h + 1)
+    end
+  end
   return clamp(s, new_rows)
 end
 
@@ -469,6 +484,11 @@ function M.reduce(state, action)
   elseif t == "mark_range" then
     local s = vim.deepcopy(state)
     s.marked = selection.mark_range(state.marked or {}, rows, action.from, action.to)
+    return s
+  elseif t == "release_dates" then
+    -- merge: an older, smaller answer never drops dates already known
+    local s = vim.deepcopy(state)
+    s.release_dates = vim.tbl_extend("force", s.release_dates or {}, vim.deepcopy(action.dates or {}))
     return s
   elseif t == "unmark_all" then
     return vim.tbl_extend("force", vim.deepcopy(state), { marked = {} })

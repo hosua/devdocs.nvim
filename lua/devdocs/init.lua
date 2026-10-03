@@ -211,10 +211,12 @@ function M.uninstall(slug, opts)
   end
 end
 
---- Delete old versions: per language keep only the current one (the docs
---- list's newest when installed, else the newest installed) and delete the
---- other installed versions. A language with one installed version is left
---- alone. Asks first with the full list unless `yes`.
+--- Delete old versions. Per language, keep the newest installed version
+--- that is enabled (the newest installed one when all are disabled; versions
+--- compare across the docs list and installed meta, so an install newer than
+--- the list is kept) plus every version a project pins in projects.json, and
+--- delete the other installed versions. A language with one installed
+--- version is left alone. Asks first with the full list unless `yes`.
 --- @param opts { base?: string, yes?: boolean, docs?: DevDocsDoc[], on_done?: fun(removed: integer, errors: string[]) }|nil
 ---   base: only this language ("python" or any of its slugs); docs: use this
 ---   docs list instead of the cached/fetched one
@@ -231,15 +233,19 @@ function M.prune(opts)
       installed[s] = store.meta(s) or {}
     end
     local base = opts.base and opts.base ~= "" and manifest.base(opts.base) or nil
-    local slugs = selection.prune_targets(installed, docs, base)
+    local disabled = {}
+    for slug, on in pairs(store.state().enabled) do
+      disabled[slug] = on == false or nil
+    end
+    local pinned = selection.pinned_slugs(installed, docs, require("devdocs.projects").pins())
+    local slugs, held = selection.prune_targets(installed, docs, base, { disabled = disabled, pinned = pinned })
+    local note = selection.prune_note(held, pinned)
     if #slugs == 0 then
-      notify(
-        base and ("%s has at most one installed version; nothing to prune"):format(base)
-          or "every language has at most one installed version; nothing to prune"
-      )
+      local msg = base and ("%s: nothing to prune"):format(base) or "nothing to prune"
+      notify(note and (msg .. "; " .. note) or msg)
       return
     end
-    local msg = selection.confirm_message(slugs, installer.disk_usage(slugs), paths.docs_dir())
+    local msg = selection.confirm_message(slugs, installer.disk_usage(slugs), paths.docs_dir(), note and { note })
     if not opts.yes and not require("devdocs.ui.float").confirm(msg) then
       return
     end

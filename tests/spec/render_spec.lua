@@ -185,6 +185,54 @@ describe("list render", function()
     )
   end)
 
+  it("says how many docs are marked in the status line, filter or not", function()
+    local s = state(100, 20, {
+      installed = { css = { mtime = 10 }, ["python~3.12"] = { mtime = 10 }, ["python~3.9"] = { mtime = 10 } },
+      jobs = {},
+      marked = { css = true, ["python~3.9"] = true },
+    })
+    local r = render.render(s)
+    local at = r.lines[1]:find("2 marked", 1, true)
+    ok(at, r.lines[1])
+    local span = vim.tbl_filter(function(sp)
+      return sp.row == 1 and sp.hl == "DevDocsMark"
+    end, r.spans)[1]
+    ok(span, "no DevDocsMark span on the status line")
+    eq("2 marked", r.lines[1]:sub(span.col_start + 1, span.col_end))
+    -- the marks stay (and stay visible) when a filter hides them
+    local f = model.reduce(s, { type = "filter", text = "rust" })
+    ok(render.render(f).lines[1]:find("2 marked", 1, true), render.render(f).lines[1])
+    ok(not render.render(state(100, 20)).lines[1]:find("marked", 1, true))
+  end)
+
+  it("the Version column fits a long rolling release", function()
+    local docs = vim.deepcopy(DOCS)
+    docs[#docs + 1] = doc("vscode", "", "VS Code", 1e6, 10, "1.104.0")
+    local r = render.render(state(100, 20, { docs = docs }))
+    local line = vim.tbl_filter(function(l)
+      return l:find("VS Code", 1, true) ~= nil
+    end, r.lines)[1]
+    ok(line and line:find("1.104.0 (current)", 1, true), line)
+    eq(dcol(r.lines[3], "Released", true), dcol(line, DATE), "still aligned")
+  end)
+
+  it("maps buffer lines to rows: header lines target nothing, the rest clamps", function()
+    -- 7 rows, a 3-row window scrolled to row 4: buffer lines 5..7 show rows 4..6
+    local s = vim.tbl_extend("force", state(100, 3), { top = 4 })
+    eq(nil, render.line_to_row(s, 7, 4))
+    eq(nil, render.line_to_row(s, 7, 1))
+    eq(4, render.line_to_row(s, 7, 5))
+    eq(6, render.line_to_row(s, 7, 7))
+    eq(6, render.line_to_row(s, 7, 99), "past the last drawn row clamps to it")
+    eq({ 4, 6 }, { render.visual_range(s, 7, 2, 7) }, "a range from the header starts at the first row")
+    eq({ 6, 5 }, { render.visual_range(s, 7, 7, 6) })
+    eq({}, { render.visual_range(s, 7, 1, 4) }, "only header lines: nothing")
+    eq({}, { render.visual_range(s, 0, 5, 6) }, "no rows: nothing")
+    -- a short list: the window has fewer rows than its height
+    local short = vim.tbl_extend("force", state(100, 10), { top = 1 })
+    eq(2, render.line_to_row(short, 2, 50))
+  end)
+
   it("emits only the visible window of rows and reports the cursor line", function()
     local s = state(120, 2)
     s = model.reduce(s, { type = "bottom" })
