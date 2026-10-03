@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.0](https://github.com/hosua/devdocs.nvim/compare/v0.2.0...v0.3.0) (2026-10-03)
+
+
+### Features
+
+* fall back to LSP hover when looking up a project variable ([#13](https://github.com/hosua/devdocs.nvim/issues/13)) ([97253e2](https://github.com/hosua/devdocs.nvim/commit/97253e242bdca45c204d77f09ebb49ab075efe37))
+* paginate the viewer with p, jump between sections and chapters, and show help as aligned tables ([#15](https://github.com/hosua/devdocs.nvim/issues/15)) ([a827b3a](https://github.com/hosua/devdocs.nvim/commit/a827b3aa5e6b8629e6e5507d0f6bc2ce8fb6964b))
+* show a "nothing to document" popup for strings, comments, numbers, operators and names declared in the buffer ([#13](https://github.com/hosua/devdocs.nvim/issues/13)) ([97253e2](https://github.com/hosua/devdocs.nvim/commit/97253e242bdca45c204d77f09ebb49ab075efe37))
+
 ## [0.2.0](https://github.com/hosua/devdocs.nvim/compare/v0.1.0...v0.2.0) (2026-10-03)
 
 ### Features
