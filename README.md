@@ -14,34 +14,124 @@ The data comes from the same files devdocs' own `thor docs:download` uses
 `devdocs.io/docs.json`), or from a self-hosted devdocs, or from a local
 mirror built by `:DevDocs mirror`.
 
-## Requirements
+## Dependencies
 
-| | |
-|---|---|
-| Neovim | 0.11 or newer |
-| `curl`, `tar` | downloading and extracting docs |
-| `rg` (ripgrep) | `:DevDocs search` |
-| treesitter `markdown` parser | viewer highlighting (ships with Neovim) |
-| telescope.nvim (optional) | search picker and candidate picker; without it search fills the quickfix list and candidates use `vim.ui.select` |
-| language parsers (optional) | `std::cout`, `os.path.join`, `arr.map` are resolved from the syntax tree; without a parser the word under the cursor is used |
-| `git`, `docker` (optional) | `:DevDocs mirror` |
+| Dependency | | Without it |
+|---|---|---|
+| Neovim 0.11+ | required | - |
+| `curl`, `tar` | required | docs can't be downloaded or extracted |
+| `rg` (ripgrep) | required for search | `:DevDocs search` reports `rg is not installed`; lookups, the viewer and the manager still work |
+| treesitter `markdown` parser | required (ships with Neovim) | the viewer shows plain text, no highlighting |
+| [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) | optional | search results go to the quickfix list, and an ambiguous lookup asks through `vim.ui.select` |
+| treesitter parsers for your languages | optional | `std::cout`, `os.path.join`, `arr.map` can't be read from the syntax tree; the word under the cursor is looked up instead |
+| language servers (`lua_ls`, pyright, …) | optional | the doc version comes from project files, the shebang or `<tool> --version` instead of the server's settings |
+| [mason.nvim](https://github.com/mason-org/mason.nvim) | optional | an empty `import.docs` derives nothing; docs are still installed per buffer (`install_as_needed`) |
+| `git`, `docker` | optional | no `:DevDocs mirror` (building a local mirror of every doc) |
+
+`:checkhealth devdocs` checks all of these.
 
 ## Install
 
-Requires Neovim >= 0.11. With lazy.nvim:
+### lazy.nvim
 
 ```lua
 {
   "hosua/devdocs.nvim",
+  dependencies = {
+    "nvim-telescope/telescope.nvim", -- optional: search and candidate pickers
+    "nvim-lua/plenary.nvim", -- telescope's own dependency
+  },
   cmd = { "DevDocs", "DevDocsInstall", "DevDocsShowDefinition", "DevDocsShowExample", "DevDocsSearch", "DevDocsList" },
   event = "VeryLazy", -- so install_as_needed and the import sync run without a keypress
   opts = {},
 }
 ```
 
-`opts = {}` is enough. On first use the docs list is fetched and cached for a
-day; nothing is downloaded until a buffer needs a doc (`install_as_needed`),
-`import.docs` asks for one, or you install one.
+<details><summary>vim.pack (built in, Neovim 0.12+)</summary>
+
+```lua
+vim.pack.add({
+  "https://github.com/hosua/devdocs.nvim",
+  "https://github.com/nvim-lua/plenary.nvim", -- for telescope
+  "https://github.com/nvim-telescope/telescope.nvim", -- optional: search and candidate pickers
+})
+require("devdocs").setup({})
+```
+
+</details>
+
+<details><summary>vim-plug</summary>
+
+```vim
+Plug 'hosua/devdocs.nvim'
+Plug 'nvim-lua/plenary.nvim'          " for telescope
+Plug 'nvim-telescope/telescope.nvim'  " optional: search and candidate pickers
+" after plug#end():
+lua require("devdocs").setup({})
+```
+
+</details>
+
+<details><summary>Manual</summary>
+
+```bash
+git clone https://github.com/hosua/devdocs.nvim ~/.local/share/nvim/site/pack/plugins/start/devdocs.nvim
+```
+
+Then call `require("devdocs").setup({})` in `init.lua`.
+
+</details>
+
+The `:DevDocs` commands exist without `setup()`, but `setup()` starts
+`install_as_needed` and the import sync, so call it (lazy.nvim's `opts` does).
+On first use the docs list is fetched and cached for a day; nothing is
+downloaded until a buffer needs a doc (`install_as_needed`), `import.docs`
+asks for one, or you install one.
+
+### Configurations
+
+**Minimal**: install docs for whatever you open, in a float.
+
+```lua
+opts = {}
+```
+
+**Ask before downloading, pick docs up front**: for slow or metered
+connections. Nothing installs without a yes, and the listed docs stay
+installed.
+
+```lua
+opts = {
+  install_as_needed = "prompt",
+  import = { docs = { "lua~5.4", "python*", "javascript", "css" }, recent_only = true },
+}
+```
+
+**Side split, LSP hover as fallback**: docs open next to your code; a symbol
+with no devdocs entry falls back to `vim.lsp.buf.hover()`.
+
+```lua
+opts = {
+  view = { mode = "vsplit" },
+  lookup = { fallback = "lsp_hover" },
+}
+```
+
+**Offline mirror**: after `:DevDocs mirror`, install and update from the
+local tree instead of the CDN.
+
+```lua
+opts = {
+  install = {
+    source = "json",
+    doc_url = "file://" .. vim.fn.stdpath "data" .. "/devdocs/mirror/devdocs/public/docs/{slug}/{file}",
+    manifest_url = "file://" .. vim.fn.stdpath "data" .. "/devdocs/mirror/devdocs/public/docs/docs.json",
+  },
+}
+```
+
+Every option and its default: [Configuration](#configuration). Suggested
+keymaps: [Keymaps](#keymaps).
 
 ## Commands
 
