@@ -4,7 +4,7 @@
 #   DEVDOCS_SRC=~/.local/share/nvim/devdocs DEVDOCS_LAZY=~/.local/share/nvim/lazy \
 #     bash docs/tapes/capture.sh [shot...]
 #
-# Shots: lookup-demo list-demo viewer-paging explain-popup (GIFs), examples
+# Shots: lookup-demo list-demo viewer-paging explain-popup index (GIFs), examples
 # search apply health help explain-png (PNGs; `help` writes viewer-help.png);
 # default: all.
 # DEVDOCS_SRC is only read: manifest.json, releases/ and a few docs are copied
@@ -20,7 +20,7 @@ DPY=${DEMO_DISPLAY:-:99}
 OUT=$PWD/docs/media
 SLUGS=(cpp 'lua~5.4' 'lua~5.1' 'python~3.12' 'python~3.13' css javascript node)
 shots=("$@")
-[ ${#shots[@]} -eq 0 ] && shots=(lookup-demo list-demo viewer-paging examples search apply health help explain-popup explain-png)
+[ ${#shots[@]} -eq 0 ] && shots=(lookup-demo list-demo viewer-paging examples search apply health help explain-popup index explain-png)
 
 rm -rf -- "$DEMO"
 mkdir -p "$DEMO"/{repo,data/docs,home,work,xdg/{config,data,state,cache}} "$OUT"
@@ -105,7 +105,7 @@ rec() {
   sleep 0.8
 }
 stop_rec() {
-  sleep 1.5 # hold the last frame
+  sleep 2.3 # hold the last frame (>= 2 s)
   kill -INT "$rec_pid" && wait "$rec_pid" || true
   local f="fps=12,scale=900:-1:flags=lanczos"
   ffmpeg -loglevel error -y -i "$DEMO/$rec_name.mp4" -vf "$f,palettegen=max_colors=128:stats_mode=diff" "$DEMO/pal.png"
@@ -168,6 +168,17 @@ for s in "${shots[@]}"; do
     keys 1 G 0 w && sleep 0.4
     typ ':DevDocs definition' && keys Return && sleep 2
     stop_rec ;;
+  index) # :DevDocs open -> the buffer's doc index; expand a type, filter, open an entry, I back and forth
+    start demo.lua && rec index
+    slow ':DevDocs open' && keys Return && sleep 2.2
+    keys j j j && sleep 0.5 && keys l && sleep 1.6
+    typ '}' && sleep 0.8 && keys Tab && sleep 1.4
+    keys Tab && sleep 0.8
+    keys slash && sleep 0.4 && slow 'insert' && sleep 0.8 && keys Return && sleep 1.6
+    keys j j && sleep 0.8
+    keys Return && sleep 2.2
+    keys I && sleep 2.2
+    keys I && stop_rec ;;
   explain-png) # the popup on a string literal
     start demo.lua && keys 2 G 0 f H && cmd ':DevDocs definition' && shot explain-popup 1.2 ;;
   *) echo "unknown shot: $s" >&2; exit 2 ;;

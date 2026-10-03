@@ -218,6 +218,8 @@ yank the devdocs.io url of the entry under the cursor. An entry opens in the
 viewer; `<BS>` (or `u`) returns to the index as you left it. Docs with a single type
 list their entries directly. Keys: `?`.
 
+![:DevDocs open on a Lua file: the index of lua~5.4 with its types and entry counts, a type expanded, the next type with }, the filter /insert, table.insert opened in the viewer, I back to the index and I again to the page](docs/media/index.gif)
+
 ![Looking up assert in the Lua manual: it opens paginated with the page index (180/256) in the title and p pages in the footer, n turns the page twice, c jumps to the next chapter, p shows the whole page (p paginated), p goes back to the paginated view](docs/media/viewer-paging.gif)
 
 ![The ? help in the viewer: an aligned Key and Action table with a bold header row and the keys spelled out, such as Backspace (<BS>)](docs/media/viewer-help.png)
