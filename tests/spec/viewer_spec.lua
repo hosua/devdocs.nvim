@@ -179,8 +179,12 @@ describe("viewer p (whole page at the current section)", function()
     eq("### assert (v [, message])", vim.api.nvim_get_current_line())
     eq(20, topline())
     ok(title():find("assert()", 1, true), title())
+    -- the footer is text, or { text, hl } chunks when keys are highlighted
     local footer = vim.api.nvim_win_get_config(0).footer
-    ok(vim.inspect(footer):find("o browser", 1, true), vim.inspect(footer))
+    local text = type(footer) == "table" and table.concat(vim.tbl_map(function(c)
+      return c[1]
+    end, footer)) or footer
+    ok(text:find("o browser", 1, true), vim.inspect(footer))
   end)
 
   it("goes back to the section view from the page", function()
