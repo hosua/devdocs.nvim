@@ -206,12 +206,16 @@ local function pages_of(row)
   return n > 0 and n or nil
 end
 
+--- The fold marks of a collapsible row: a language with versions here, a
+--- type in the doc index.
+M.CHEVRON = { open = "▾ ", closed = "▸ " }
+
 --- Name column: chevron + name for a language, tree glyph + slug for a version.
 local function name_of(row, last)
   if row.kind == "lang" then
     local chevron = "  "
     if #row.children > 1 then
-      chevron = row.expanded and "▾ " or "▸ "
+      chevron = row.expanded and M.CHEVRON.open or M.CHEVRON.closed
     end
     return chevron .. row.name
   end
@@ -419,7 +423,7 @@ function M.render(state)
     local row = rows[i]
     local line_no = #lines + 1
     if row.kind == "group" then
-      local text = ("▾ %s (%d)"):format(row.label, row.count)
+      local text = ("%s%s (%d)"):format(M.CHEVRON.open, row.label, row.count)
       lines[line_no] = M.cell(text, width)
       spans[#spans + 1] = { row = line_no, col_start = 0, col_end = #text, hl = "DevDocsHeader" }
     else

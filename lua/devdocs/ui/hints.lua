@@ -9,7 +9,7 @@ M.KEY_HL = "DevDocsKey"
 M.ACTION_HL = "DevDocsDim"
 M.SEP = "  "
 
---- @alias DevDocsHint { [1]: string, [2]: string } key, action
+--- @alias DevDocsHint { [1]: string, [2]: string, keep?: boolean } key, action; keep: never dropped from a narrow footer
 
 --- "o browser  y url"
 --- @param hints DevDocsHint[]
@@ -81,16 +81,27 @@ end
 
 --- Chunks for nvim_open_win's `footer` ({ text, hl } pairs), padded with a
 --- space on each side like a plain footer. Trailing hints are dropped until
---- it fits `width` display cells.
+--- it fits `width` display cells, except hints marked `keep = true` (the
+--- ones that must stay visible, like the help and close keys).
 --- @param hints DevDocsHint[]
 --- @param width integer
 --- @return table[] chunks
 function M.chunks(hints, width)
-  local n = #hints
-  while n > 1 and vim.fn.strdisplaywidth(" " .. M.text(vim.list_slice(hints, 1, n)) .. " ") > width do
-    n = n - 1
+  local shown = vim.list_slice(hints)
+  while #shown > 1 and vim.fn.strdisplaywidth(" " .. M.text(shown) .. " ") > width do
+    local drop
+    for i = #shown, 1, -1 do
+      if not shown[i].keep then
+        drop = i
+        break
+      end
+    end
+    if not drop then
+      break
+    end
+    table.remove(shown, drop)
   end
-  local out = pieces(vim.list_slice(hints, 1, n), M.SEP, " ")
+  local out = pieces(shown, M.SEP, " ")
   if #out > 0 then
     out[#out][1] = out[#out][1] .. " "
   end

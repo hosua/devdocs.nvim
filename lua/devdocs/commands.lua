@@ -14,10 +14,6 @@ M.subcommands = {
     api().example { text = #args > 0 and table.concat(args, " ") or nil }
   end,
   open = function(args)
-    if not args[1] then
-      vim.notify("devdocs: usage: :DevDocs open <doc> [entry]", vim.log.levels.ERROR)
-      return
-    end
     api().open(args[1], #args > 1 and table.concat(vim.list_slice(args, 2), " ") or nil)
   end,
   search = function(args)

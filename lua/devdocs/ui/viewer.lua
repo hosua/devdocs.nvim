@@ -5,9 +5,15 @@
 ---
 --- Keys inside: q/<Esc> close · o browser · y yank url · <CR> follow link
 --- · <BS> back · n/N next/previous section · c/C next/previous chapter · e
---- examples · p toggle paginated / whole page · s search this doc · ? help
+--- examples · p toggle paginated / whole page · s search this doc · I the
+--- index of the doc · ? help
+--- The index (mode "index", glossary.lua) shares the float and the history:
+--- a doc's types and entries, expanded and filtered in place, an entry
+--- opening as a page that <BS> leaves again.
 local config = require "devdocs.config"
 local float = require "devdocs.ui.float"
+local glossary = require "devdocs.ui.glossary"
+local glossary_render = require "devdocs.ui.glossary_render"
 local headings = require "devdocs.headings"
 local index = require "devdocs.index"
 local paths = require "devdocs.paths"
@@ -19,26 +25,28 @@ local M = {}
 --- @field slug string
 --- @field path string      page path with optional fragment
 --- @field entry DevDocsEntry|nil
---- @field mode "section"|"page"|"examples"|"help"  "section" is the paginated view
+--- @field mode "section"|"page"|"examples"|"help"|"index"  "section" is the paginated view
 --- @field line integer|nil       line of the shown text to put the cursor on
 --- @field top boolean|nil         also scroll that line to the top of the window
 --- @field topline integer|nil     first visible line to restore (history entries)
 --- @field page_at integer|nil     whole-page line to return to on p / e from the examples
 --- @field page_start integer|nil  paginated: first page line of the shown page; nil = the page of the entry's anchor
---- @field under "section"|"page"|"examples"|nil  help only: the mode under the help screen
+--- @field under "section"|"page"|"examples"|"index"|nil  help only: the mode under the help screen
+--- @field index DevDocsGlossaryState|nil  index only: what is expanded and filtered (path is "", entry the ● mark, line the cursor row)
 --- @field view_mode "float"|"split"|"vsplit"|"tab"|nil  window kind override
 
 local hints = require "devdocs.ui.hints"
 M.FOOTER = {
   { "⏎", "follow" },
   { "⌫", "back" },
+  { "I", "index" },
   { "e", "examples" },
   { "p", "pages" },
   { "n/N", "section" },
   { "c/C", "chapter" },
   { "s", "search" },
-  { "?", "help" },
-  { "q", "close" },
+  { "?", "help", keep = true },
+  { "q", "close", keep = true },
   -- least used last: a narrow float drops trailing hints, and ? lists them
   { "o", "browser" },
   { "y", "url" },
@@ -70,6 +78,7 @@ M.HELP = {
       { "e", "only the examples of this entry or page (e again: back)" },
       { "p", "toggle paginated / pages (the whole doc page), keeping your place" },
       { "s", "search inside this doc" },
+      { "I", "the index of this doc (I again returns)" },
       {
         "n / N",
         "next / previous section: any heading (3n moves three); paginated, past the page's end it turns the page",
@@ -178,6 +187,8 @@ function M.normalize(view)
 end
 
 local current
+local last = {} -- slug -> the index state it was left in
+local last_row = {} -- slug -> the cursor row it was left on
 local NS = vim.api.nvim_create_namespace "devdocs_viewer"
 
 --- @class DevDocsLink
@@ -310,6 +321,9 @@ local function snapshot()
   local top = vim.api.nvim_win_call(win, function()
     return vim.fn.winsaveview().topline
   end)
+  if view.mode == "index" then
+    last_row[view.slug] = cursor[1]
+  end
   return vim.tbl_extend("force", view, { line = cursor[1], topline = top, top = false })
 end
 
@@ -317,79 +331,204 @@ local function push_history()
   current.history[#current.history + 1] = snapshot()
 end
 
-local function show(view, push)
-  local lines, title, err = M.render(view)
-  if err then
-    notify(err, vim.log.levels.WARN)
+-- ---------------------------------------------------------------- index
+
+local trees = {} -- slug -> DevDocsGlossary, dropped when docs change
+store.on_invalidate(function()
+  trees = {}
+end)
+
+--- The index tree of a doc, built once per install.
+--- @param slug string
+--- @return DevDocsGlossary
+local function tree_for(slug)
+  if not trees[slug] then
+    trees[slug] = glossary.build(slug, store.meta(slug), store.entries(slug))
   end
-  if view.view_mode and current and current.float:valid() and current.float.mode ~= view.view_mode then
-    M.close()
+  return trees[slug]
+end
+
+--- Draw the index view of `self` (rows, spans, title, footer, cursor) for
+--- the window's current width.
+local function draw_index(self)
+  local view, f = self.view, self.float
+  local tree = tree_for(view.slug)
+  local rows = glossary.rows(tree, view.index)
+  local lines, spans = { glossary_render.empty(tree) }, {}
+  if tree.total > 0 then
+    local drawn = glossary_render.render(
+      tree,
+      rows,
+      { width = vim.api.nvim_win_get_width(f.win), current = view.entry, filter = view.index.filter }
+    )
+    lines, spans = drawn.lines, drawn.spans
   end
-  local display, links = M.display(lines)
-  if current and current.float:valid() then
-    if push then
-      push_history()
+  self.rows = rows
+  self.links = {}
+  f:set_lines(lines)
+  apply_links(f.buf, {})
+  float.highlight(f.buf, NS, spans)
+  f:set_title(glossary_render.title(tree, view.index, rows[1].count), glossary_render.FOOTER)
+  -- Neovim 0.11 re-applies style = "minimal" (cursorline off) on a float's reconfiguration
+  vim.wo[f.win].cursorline = true
+  place_cursor(f.win, view, #lines)
+end
+
+--- Switch the float between the page and the index look: the index has no
+--- markdown, no wrapping or concealing, and a cursor line. Window options,
+--- treesitter and the key set follow; nothing happens when the kind is
+--- already right.
+--- @param kind "page"|"index"
+local function apply_kind(self, kind)
+  if self.kind == kind then
+    return
+  end
+  local first = self.kind == nil
+  self.kind = kind
+  local buf, win = self.float.buf, self.float.win
+  if kind == "index" then
+    pcall(vim.treesitter.stop, buf)
+    vim.bo[buf].filetype = ""
+    vim.wo[win].conceallevel = 0
+    vim.wo[win].wrap = false
+    vim.wo[win].cursorline = true
+  elseif not first then
+    local cfg = config.get().view
+    vim.bo[buf].filetype = "markdown"
+    pcall(vim.treesitter.start, buf, "markdown")
+    vim.wo[win].conceallevel = cfg.conceal and 2 or 0
+    vim.wo[win].wrap = cfg.wrap
+    vim.wo[win].cursorline = false
+  end
+  local old, new = self.keys[first and kind or (kind == "index" and "page" or "index")], self.keys[kind]
+  for lhs in pairs(old) do
+    if new[lhs] == nil then
+      pcall(vim.keymap.del, "n", lhs, { buffer = buf })
     end
-    current.view = view
-    current.links = links
-    current.float:set_lines(display)
-    apply_links(current.float.buf, links)
-    current.float:set_title(title, M.footer(view.mode))
-    place_cursor(current.float.win, view, #lines)
-  else
-    local keys = {}
-    local self = { view = view, history = {} }
-    local function act(fn)
-      return function()
-        fn(self)
-      end
+  end
+  if not first then
+    for lhs, fn in pairs(new) do
+      vim.keymap.set("n", lhs, fn, { buffer = buf, nowait = true, silent = true })
     end
-    keys["q"] = act(M.close)
-    keys["<Esc>"] = act(M.close)
-    keys["o"] = act(M.browser)
-    keys["y"] = act(M.yank)
-    keys["<CR>"] = act(M.follow)
-    keys["<2-LeftMouse>"] = act(M.follow)
-    keys["<BS>"] = act(M.back)
-    keys["u"] = act(M.back)
-    keys["e"] = act(function()
-      local view = self.view
+  end
+end
+
+--- The buffer-local keys of the page views and of the index, lhs -> fn.
+local function key_sets()
+  local function act(fn)
+    return function()
+      fn()
+    end
+  end
+  local common = {
+    ["q"] = act(M.close),
+    ["<Esc>"] = act(M.close),
+    ["o"] = act(M.browser),
+    ["y"] = act(M.yank),
+    ["<BS>"] = act(M.back),
+    ["u"] = act(M.back),
+    ["I"] = act(M.index),
+    ["?"] = act(M.help),
+    ["s"] = act(function()
+      local slug = current.view.slug
+      M.close()
+      vim.schedule(function()
+        require("devdocs").search("@" .. slug .. " ")
+      end)
+    end),
+  }
+  local page = vim.tbl_extend("error", common, {
+    ["<CR>"] = act(M.follow),
+    ["<2-LeftMouse>"] = act(M.follow),
+    ["e"] = act(function()
+      local view = current.view
       if view.mode ~= "examples" then
         M.set_mode "examples"
       else
         -- back to the view e came from: page_at is only set from the whole page
         M.set_mode(view.page_at and "page" or "section")
       end
-    end)
-    keys["p"] = act(M.toggle)
-    keys["s"] = act(function()
-      local slug = self.view.slug
-      M.close()
-      vim.schedule(function()
-        require("devdocs").search("@" .. slug .. " ")
-      end)
-    end)
-    keys["n"] = act(function()
+    end),
+    ["p"] = act(M.toggle),
+    ["n"] = act(function()
       M.jump("section", 1, vim.v.count1)
-    end)
-    keys["N"] = act(function()
+    end),
+    ["N"] = act(function()
       M.jump("section", -1, vim.v.count1)
-    end)
-    keys["c"] = act(function()
+    end),
+    ["c"] = act(function()
       M.jump("chapter", 1, vim.v.count1)
-    end)
-    keys["C"] = act(function()
+    end),
+    ["C"] = act(function()
       M.jump("chapter", -1, vim.v.count1)
+    end),
+  })
+  local function step(type)
+    return act(function()
+      M.index_act { type = type }
     end)
-    keys["?"] = act(M.help)
+  end
+  local idx = vim.tbl_extend("error", common, {
+    ["<CR>"] = act(function()
+      M.index_enter()
+    end),
+    ["<2-LeftMouse>"] = act(function()
+      M.index_enter()
+    end),
+    ["l"] = act(function()
+      M.index_enter "expand"
+    end),
+    ["h"] = step "collapse",
+    ["<Tab>"] = step "toggle",
+    ["zR"] = step "expand_all",
+    ["zM"] = step "collapse_all",
+    ["}"] = step "next_group",
+    ["{"] = step "prev_group",
+    ["/"] = act(M.index_filter),
+    ["d"] = act(M.index_doc),
+  })
+  return { page = page, index = idx }
+end
+
+local function show(view, push)
+  local is_index = view.mode == "index"
+  local lines, title, display, links = {}, "", {}, {}
+  if not is_index then
+    local err
+    lines, title, err = M.render(view)
+    if err then
+      notify(err, vim.log.levels.WARN)
+    end
+    display, links = M.display(lines)
+  end
+  if view.view_mode and current and current.float:valid() and current.float.mode ~= view.view_mode then
+    M.close()
+  end
+  if current and current.float:valid() then
+    if push then
+      push_history()
+    end
+    current.view = view
+    apply_kind(current, is_index and "index" or "page")
+    if is_index then
+      draw_index(current)
+    else
+      current.links = links
+      current.float:set_lines(display)
+      apply_links(current.float.buf, links)
+      current.float:set_title(title, M.footer(view.mode))
+      place_cursor(current.float.win, view, #lines)
+    end
+  else
+    local self = { view = view, history = {}, keys = key_sets(), origin = vim.api.nvim_get_current_buf() }
     self.float = float.open {
       lines = display,
       title = title,
-      footer = M.footer(view.mode),
-      filetype = "markdown",
+      footer = is_index and glossary_render.FOOTER or M.footer(view.mode),
+      filetype = (not is_index) and "markdown" or nil,
       mode = view.view_mode,
       name = ("devdocs://%s/%s"):format(view.slug, view.path),
-      keys = keys,
+      keys = self.keys[is_index and "index" or "page"],
       on_close = function()
         if current == self then
           current = nil
@@ -401,10 +540,19 @@ local function show(view, push)
     -- 'scrolloff' would push a `zt` heading down (or center it with 999);
     -- window-local, so the user's other windows keep theirs
     vim.wo[self.float.win].scrolloff = 0
-    apply_links(self.float.buf, links)
-    if view.line then
-      place_cursor(self.float.win, view, #lines)
+    if is_index then
+      apply_kind(self, "index")
+      draw_index(self)
+    else
+      self.kind = "page"
+      apply_links(self.float.buf, links)
+      if view.line then
+        place_cursor(self.float.win, view, #lines)
+      end
     end
+  end
+  if is_index then
+    return
   end
   store.push_recent(view.slug, view.path, view.entry and view.entry.name or index.title(lines))
   local hook = config.get().hooks.on_open
@@ -525,11 +673,24 @@ function M.toggle()
   M.set_mode(base == "page" and "section" or "page")
 end
 
+--- The page o and y act on: the entry under the cursor in the index (the
+--- doc's own page when the cursor is on a type), else the view's page.
+--- @return string|nil
+local function url_path()
+  local view = current.view
+  if view.mode ~= "index" then
+    return view.path
+  end
+  local row = current.rows and current.float:valid() and current.rows[vim.api.nvim_win_get_cursor(current.float.win)[1]]
+  local e = glossary.target(row)
+  return e and e.path or nil
+end
+
 function M.browser()
   if not current then
     return
   end
-  local url = paths.browser_url(current.view.slug, current.view.path)
+  local url = paths.browser_url(current.view.slug, url_path())
   local ok, err = pcall(vim.ui.open, url)
   if not ok then
     notify("could not open a browser: " .. tostring(err), vim.log.levels.ERROR)
@@ -542,7 +703,7 @@ function M.yank()
   if not current then
     return
   end
-  local url = paths.browser_url(current.view.slug, current.view.path)
+  local url = paths.browser_url(current.view.slug, url_path())
   vim.fn.setreg("+", url)
   vim.fn.setreg('"', url)
   notify("yanked " .. url)
@@ -657,7 +818,13 @@ function M.help()
   push_history()
   current.view = v
   current.links = {}
-  local lines, spans = M.help_lines(vim.api.nvim_win_get_width(current.float.win))
+  local width = vim.api.nvim_win_get_width(current.float.win)
+  local lines, spans
+  if v.under == "index" then
+    lines, spans = glossary_render.help_lines(width)
+  else
+    lines, spans = M.help_lines(width)
+  end
   current.float:set_lines(lines)
   apply_links(current.float.buf, {})
   float.highlight(current.float.buf, NS, spans)
@@ -667,5 +834,172 @@ function M.help()
   end)
   current.float:set_title("DevDocs help", { { "⌫", "back" }, { "q", "close" } })
 end
+
+-- ---------------------------------------------------------------- index
+
+--- Open the index of a doc: its types and entries, in the state it was left
+--- in. With `opts.path` (and `opts.name`) the entry's type is expanded, the
+--- cursor lands on the entry and it is marked ●. Goes on the history when a
+--- viewer is open (and is not already this doc's index).
+--- @param slug string
+--- @param opts { path?: string, name?: string }|nil
+function M.open_index(slug, opts)
+  opts = opts or {}
+  if not store.is_installed(slug) then
+    notify(("%s is not installed (:DevDocs install %s)"):format(slug, slug), vim.log.levels.WARN)
+    return
+  end
+  local tree = tree_for(slug)
+  local state, row, mark = last[slug] or glossary.new(), last_row[slug] or 1, nil
+  local gi, ei
+  if opts.path then
+    gi, ei = glossary.find(tree, opts.path, opts.name)
+  end
+  if gi then
+    mark = tree.groups[gi].entries[ei]
+    state, row = glossary.reveal(tree, state, opts.path, opts.name)
+  end
+  last[slug], last_row[slug] = state, row
+  local view = { slug = slug, path = "", mode = "index", index = state, entry = mark, line = row }
+  local here = current and current.view
+  show(view, current ~= nil and not (here.mode == "index" and here.slug == slug))
+end
+
+--- I: from a page, the index of its doc with the page's entry shown; in the
+--- index, back to the page it was opened from.
+function M.index()
+  if not current or not current.float:valid() then
+    return
+  end
+  local view = current.view
+  if view.mode == "help" then
+    return
+  end
+  if view.mode == "index" then
+    local prev = current.history[#current.history]
+    if prev and prev.mode ~= "index" then
+      M.back()
+    else
+      notify "no page to return to"
+    end
+    return
+  end
+  local entry = view.entry or index.entry_for_path(view.slug, view.path)
+  M.open_index(view.slug, { path = view.path, name = entry and entry.name })
+end
+
+--- Apply an action (glossary.reduce) to the index on screen, redrawing in
+--- place; the history is untouched.
+--- @param action { type: string, text?: string }
+function M.index_act(action)
+  local c = current
+  if not c or not c.float:valid() or c.view.mode ~= "index" then
+    return
+  end
+  local view = snapshot()
+  local state, line = glossary.reduce(tree_for(view.slug), view.index, view.line, action)
+  last[view.slug], last_row[view.slug] = state, line
+  view.index, view.line = state, line
+  c.view = view
+  draw_index(c)
+end
+
+--- <CR>, l and a double-click: open the entry under the cursor as a page;
+--- on a type or the doc row, expand / collapse it (l only expands).
+--- @param on_fold "toggle"|"expand"|nil what a type or the doc row does (default toggle)
+function M.index_enter(on_fold)
+  local c = current
+  if not c or not c.float:valid() or c.view.mode ~= "index" then
+    return
+  end
+  local row = c.rows[vim.api.nvim_win_get_cursor(c.float.win)[1]]
+  local e = glossary.target(row)
+  if not e then
+    M.index_act { type = on_fold or "toggle" }
+    return
+  end
+  show(M.normalize { slug = c.view.slug, path = e.path, entry = e, mode = "section" }, true)
+end
+
+--- /: read a filter live (Esc clears it, Enter keeps it, Backspace edits).
+function M.index_filter()
+  local c = current
+  if not c or not c.float:valid() or c.view.mode ~= "index" then
+    return
+  end
+  local text = c.view.index.filter
+  local bs = vim.api.nvim_replace_termcodes("<BS>", true, false, true)
+  local function apply()
+    M.index_act { type = "filter", text = text }
+    vim.api.nvim_echo({ { "/" .. text } }, false, {})
+    vim.cmd.redraw()
+  end
+  apply()
+  while current == c and c.float:valid() do
+    local ok, ch = pcall(vim.fn.getcharstr)
+    if not ok or ch == "\27" then
+      text = ""
+      break
+    elseif ch == "\r" or ch == "\n" then
+      break
+    elseif ch == bs or ch == "\8" or ch == "\127" then
+      text = vim.fn.strcharpart(text, 0, vim.fn.strchars(text) - 1)
+    elseif #ch == 1 and ch:match "[%w%p ]" or (ch:byte(1) or 0) >= 0xC2 then
+      text = text .. ch
+    end
+    apply()
+  end
+  vim.api.nvim_echo({ { "" } }, false, {})
+  if current == c and c.float:valid() then
+    M.index_act { type = "filter", text = text }
+  end
+end
+
+--- d: the index of another installed doc (this buffer's docs first).
+function M.index_doc()
+  if not current or not current.float:valid() or current.view.mode ~= "index" then
+    return
+  end
+  local origin = current.origin
+  local slugs, seen = {}, {}
+  local function add(slug)
+    if not seen[slug] and store.is_installed(slug) then
+      seen[slug] = true
+      slugs[#slugs + 1] = slug
+    end
+  end
+  if origin and vim.api.nvim_buf_is_valid(origin) then
+    local ok, b = pcall(require("devdocs.detect").buffer, origin)
+    for _, slug in ipairs(ok and b.slugs or {}) do
+      add(slug)
+    end
+  end
+  for _, slug in ipairs(store.installed()) do
+    add(slug)
+  end
+  vim.ui.select(slugs, {
+    prompt = "DevDocs index of:",
+    format_item = function(slug)
+      return index.breadcrumb(slug, nil)
+    end,
+  }, function(choice)
+    if choice then
+      M.open_index(choice)
+    end
+  end)
+end
+
+vim.api.nvim_create_autocmd("VimResized", {
+  group = vim.api.nvim_create_augroup("devdocs_viewer", { clear = true }),
+  callback = function()
+    -- after the float re-laid itself out: the index is as wide as the window
+    vim.schedule(function()
+      if current and current.float:valid() and current.view.mode == "index" then
+        current.view = snapshot()
+        draw_index(current)
+      end
+    end)
+  end,
+})
 
 return M
