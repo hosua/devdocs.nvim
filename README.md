@@ -72,6 +72,7 @@ One command with subcommands, plus flat aliases for each action.
 | `install [doc]` | `:DevDocsInstall` | docs for the current buffer (right version), or a named doc. `!` reinstalls |
 | `install-all` | `:DevDocsInstallAll` | every doc devdocs offers (asks; `!` skips the question). Already installed docs are skipped |
 | `uninstall <doc>` | `:DevDocsUninstall` | remove a doc (asks; `!` skips) |
+| `prune [lang]` | `:DevDocsPrune` | delete old versions: per language keep only the current one (the docs list's newest when it is installed, else the newest installed) and delete the other installed versions; `lang` limits it to one language. Asks with the full list (`!` skips). A language with one installed version is never touched |
 | `update [doc]` | `:DevDocsUpdate` | reinstall one doc, or every installed doc the docs list shows as newer |
 | `sync` | | install what `import.docs` (or the Mason-derived defaults) asks for |
 | `status` | | running install jobs |
@@ -125,7 +126,13 @@ Inside the **manager**:
 | `}` / `{` | next / previous group |
 | `<Tab>`, `l`, `h` | expand or collapse the versions of a doc |
 | `i` | install the doc under the cursor |
-| `X` | uninstall (asks) |
+| `X` | uninstall (asks); with marks, uninstall every marked doc (one question listing them and the space freed) |
+| `m` | mark / unmark the doc under the cursor (on a language: all its installed versions) and move down |
+| `V`/`v` … `m` | mark every doc in the visual selection (again: unmark) |
+| `V`/`v` … `X` or `d` | uninstall the installed docs in the visual selection (asks) |
+| `M` | clear every mark |
+| `D` | delete every installed version of this language except the current one (asks) |
+| `gD` | the same for every language, like `:DevDocs prune` (asks) |
 | `u` / `U` | update it / every outdated doc |
 | `e` | enable / disable it for lookups and search |
 | `<CR>`, double-click | open in the viewer |
@@ -373,7 +380,8 @@ All `default = true` links; override them in your colorscheme.
 `hooks.on_install(slug)` and `hooks.on_open(slug, path)` are called in
 `pcall`. `require("devdocs")` exposes `definition()`, `example()`,
 `open(doc, entry)`, `search(query)`, `install(slug, { force })`,
-`install_all({ yes })`, `uninstall(slug, { yes })`, `update(slug)`, `sync()`,
+`install_all({ yes })`, `uninstall(slug, { yes })`, `prune({ base, yes })`,
+`update(slug)`, `sync()`,
 `status()`, `recent()` and `statusline()` (a short progress string while
 installs run, `""` otherwise, for your statusline).
 

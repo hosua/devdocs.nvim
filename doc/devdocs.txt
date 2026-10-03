@@ -38,6 +38,11 @@ removes docs. The README has the long version.
                          ! reinstalls
   install-all            every doc devdocs offers (asks; ! skips)
   uninstall {doc}        remove a doc (asks; ! skips)
+  prune [lang]           delete old versions: per language keep the current
+                         one (newest in the docs list when installed, else
+                         the newest installed), delete the other installed
+                         versions. Asks with the list; ! skips. A language
+                         with one installed version is never touched
   update [doc]           reinstall one doc, or every outdated one
   sync                   install what `import.docs` asks for
   status                 running install jobs
@@ -53,7 +58,7 @@ removes docs. The README has the long version.
 Flat aliases:                                            *devdocs-aliases*
 :DevDocsShowDefinition :DevDocsShowExample :DevDocsOpen :DevDocsSearch
 :DevDocsList :DevDocsInstall :DevDocsInstallAll :DevDocsUninstall
-:DevDocsUpdate :DevDocsForceCloneAndScrape (= mirror --force)
+:DevDocsUpdate :DevDocsPrune :DevDocsForceCloneAndScrape (= mirror --force)
 
 ==============================================================================
 3. SETUP AND OPTIONS                                            *devdocs-setup*
@@ -135,6 +140,15 @@ files' mtimes once per session). See :DevDocs detect and :DevDocs resync.
   /           live filter          s   sort by name / size
   r           refresh the list     A   install every doc (asks)
   ?           help                 q   close
+
+  Marking and bulk delete (every delete asks once and lists what goes):
+  m           mark / unmark, move down (a language row: all its versions)
+  V v ... m   mark the visual selection (again: unmark)
+  M           clear every mark
+  X           with marks: uninstall every marked doc
+  V v ... X d uninstall the installed docs in the visual selection
+  D           delete this language's installed versions but the current
+  gD          the same for every language (= :DevDocs prune)
 
 ==============================================================================
 6. DATA ON DISK                                                  *devdocs-data*

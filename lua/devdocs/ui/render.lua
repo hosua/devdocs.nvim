@@ -137,7 +137,7 @@ function M.render(state)
     spans[#spans + 1] = { row = 1, col_start = #" DevDocs  ", col_end = #left, hl = "DevDocsError" }
   end
   lines[2] = M.cell(
-    " i install  X uninstall  u update  e enable  ⏎ open  Tab versions  / filter  s sort  r refresh  ? help  q",
+    " i install  X uninstall  m mark  D prune  u update  e enable  ⏎ open  Tab versions  / filter  s sort  ? help  q",
     width
   )
   spans[#spans + 1] = { row = 2, col_start = 0, col_end = #lines[2], hl = "DevDocsDim" }
@@ -224,6 +224,14 @@ M.HELP = {
   "  /            filter (type, <Esc> clears, <CR> keeps);  s toggles name/size sort",
   "  r            refresh the docs list from devdocs.io",
   "  A            install every doc (asks first)",
+  "",
+  "  m            mark / unmark the doc (or every version of a language), move down",
+  "  V … m        mark every doc in a visual selection (again: unmark)",
+  "  M            clear every mark",
+  "  X            with marks: delete every marked doc (asks first, lists them)",
+  "  V … X, V … d delete the installed docs in a visual selection (asks first)",
+  "  D            delete every installed version of this language but the current",
+  "  gD           the same for every language (:DevDocs prune)",
   "  ?            this help;  q closes",
 }
 
