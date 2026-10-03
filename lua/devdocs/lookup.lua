@@ -1,7 +1,10 @@
 --- Lookup: the symbol under the cursor -> a doc page. Candidates from
 --- symbols.lua, ranked over the buffer's docs first (detect.lua), then a
 --- decisive hit opens straight away, several hits go to the picker, and
---- none falls back per config.lookup.fallback.
+--- none falls back per config.lookup.fallback. With config.lookup.smart a
+--- project variable under the cursor (classify.lua) shows LSP hover instead,
+--- and a project symbol the docs do not know shows hover before the fallback.
+local classify = require "devdocs.classify"
 local config = require "devdocs.config"
 local detect = require "devdocs.detect"
 local index = require "devdocs.index"
@@ -57,6 +60,22 @@ local function no_docs(bufdocs)
   )
 end
 
+--- Whether a client attached to `bufnr` implements textDocument/hover.
+--- @param bufnr integer
+--- @return boolean
+function M.can_hover(bufnr)
+  return #vim.lsp.get_clients { bufnr = bufnr, method = "textDocument/hover" } > 0
+end
+
+--- Show LSP hover when a client can; false when none can (caller goes on).
+local function try_hover(bufnr)
+  if not M.can_hover(bufnr) then
+    return false
+  end
+  vim.lsp.buf.hover()
+  return true
+end
+
 local function fallback(cands, bufdocs)
   local how = config.get().lookup.fallback
   local word = cands[#cands] or cands[1] or ""
@@ -87,16 +106,27 @@ function M.run(mode, opts)
     notify("nothing under the cursor to look up", vim.log.levels.WARN)
     return
   end
+  -- An explicit selection or argument is a request for the docs; only the
+  -- cursor's own word is second-guessed.
+  local explicit = text ~= nil and text ~= ""
+  local class = (not explicit and config.get().lookup.smart) and classify.cursor(bufnr) or "unknown"
+  if class == "variable" and try_hover(bufnr) then
+    return
+  end
   local bufdocs = detect.buffer(bufnr)
   local order, tiers = detect.lookup_order(bufnr)
   local sources = index.sources(order, tiers)
   if #sources == 0 then
-    no_docs(bufdocs)
+    if not (class == "symbol" and try_hover(bufnr)) then
+      no_docs(bufdocs)
+    end
     return
   end
   local hits = rank.lookup(cands, sources, { limit = 25 })
   if #hits == 0 then
-    fallback(cands, bufdocs)
+    if not (class == "symbol" and try_hover(bufnr)) then
+      fallback(cands, bufdocs)
+    end
     return
   end
   local function open(hit)

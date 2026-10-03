@@ -102,6 +102,16 @@ require("devdocs").setup({opts})
   lookup.scope        "buffer": only the buffer's docs when its language is
                       known, else the newest version of every doc.
                       "all": the buffer's docs, then every installed doc
+  lookup.smart        true: for the word under the cursor, a local
+                      variable, parameter or field of the project (from LSP
+                      semantic tokens, else treesitter highlight captures)
+                      shows |vim.lsp.buf.hover()| instead of a doc page, and
+                      a project function the docs lack shows hover before
+                      lookup.fallback. Keywords, builtins and library names
+                      (semantic token modifier defaultLibrary) still open
+                      the docs. Needs a client that implements
+                      textDocument/hover; a visual selection or an explicit
+                      text argument always opens the docs
 
 A lookup's language comes from the filetype, then the file extension, the
 shebang, then shell dotfiles (as $SHELL). Its version, for docs with several

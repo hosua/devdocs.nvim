@@ -82,6 +82,12 @@ M.defaults = {
     -- its project uses); otherwise in the newest version of every doc.
     -- "all": the buffer's docs first, then every installed doc (slow with many docs installed).
     scope = "buffer",
+    -- On :DevDocs definition / example, tell keywords and library names from the project's
+    -- own names (LSP semantic tokens, else treesitter): a local variable, parameter or field
+    -- shows vim.lsp.buf.hover() instead of a doc page, and a project function the docs do not
+    -- know shows hover before `fallback`. Only when an attached client can hover; a visual
+    -- selection or an explicit argument always looks up the docs.
+    smart = true,
   },
 
   -- filetype -> { slug bases }, merged over the built-in table (lua/devdocs/langmap.lua).
@@ -140,6 +146,7 @@ local function validate(cfg)
   vim.validate("lookup.scope", cfg.lookup.scope, function(v)
     return v == "buffer" or v == "all"
   end, "'buffer' or 'all'")
+  vim.validate("lookup.smart", cfg.lookup.smart, "boolean")
 end
 
 --- @param opts table|nil
