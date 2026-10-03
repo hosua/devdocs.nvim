@@ -12,6 +12,15 @@
       "files": [
         ".github/workflows/ci.yml"
       ]
+    },
+    "cicd-maintenance": {
+      "status": "enabled",
+      "decided": "2026-10-03",
+      "notes": "dependabot: github-actions weekly grouped; ci-health.yml weekly scheduled CI run (opens/closes a ci-health issue); edited: ci.yml (added workflow_call)",
+      "files": [
+        ".github/dependabot.yml",
+        ".github/workflows/ci-health.yml"
+      ]
     }
   }
 }

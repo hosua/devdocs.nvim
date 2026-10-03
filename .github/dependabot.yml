@@ -1,0 +1,30 @@
+# .github/dependabot.yml - installed by the gh-cicd-project-maintenance skill.
+#
+# Zero-AI upkeep: once a week Dependabot checks every `uses:` ref in
+# .github/workflows/*.yml (and action.yml files) and opens ONE grouped PR
+# bumping the actions that have a newer release. CI runs on that PR like any
+# other, so a breaking bump shows up red before it reaches main.
+#
+# Schema: https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference
+# (verified 2026-10-02: version 2, interval weekly, groups.patterns, commit-message.prefix/include)
+#
+# Remove: delete this file. Dependabot stops opening version-update PRs;
+# already-open PRs stay open until you close them.
+
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    # "/" makes Dependabot scan /.github/workflows plus action.yml at the root.
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"          # UTC (the default timezone)
+    groups:
+      # One PR for all action bumps instead of one PR per action.
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"        # -> "ci(deps): bump the github-actions group ..."
+      include: "scope"
+    open-pull-requests-limit: 5
