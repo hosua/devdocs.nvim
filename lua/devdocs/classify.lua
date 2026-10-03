@@ -214,6 +214,52 @@ local function captures(ltree, bufnr, row, col)
   return names
 end
 
+--- Declarations for parsers Neovim ships without a locals query (its runtime
+--- has highlights but no locals.scm for lua and c; nvim-treesitter adds them).
+--- Only the names a function body declares: locals, parameters, loop names.
+M.LOCALS_FALLBACK = {
+  lua = [[
+    (variable_declaration (variable_list (identifier) @local.definition.var))
+    (variable_declaration (assignment_statement (variable_list (identifier) @local.definition.var)))
+    (assignment_statement (variable_list (identifier) @local.definition.var))
+    (function_declaration name: (identifier) @local.definition.function)
+    (for_generic_clause (variable_list (identifier) @local.definition.var))
+    (for_numeric_clause name: (identifier) @local.definition.var)
+    (parameters (identifier) @local.definition.parameter)
+  ]],
+  c = [[
+    (function_declarator declarator: (identifier) @local.definition.function)
+    (pointer_declarator declarator: (identifier) @local.definition.var)
+    (parameter_declaration declarator: (identifier) @local.definition.parameter)
+    (init_declarator declarator: (identifier) @local.definition.var)
+    (array_declarator declarator: (identifier) @local.definition.var)
+    (declaration declarator: (identifier) @local.definition.var)
+    (preproc_def name: (identifier) @local.definition.macro)
+    (preproc_function_def name: (identifier) @local.definition.macro)
+  ]],
+}
+
+local fallback_queries = {} --- lang -> parsed query, or false when it does not parse
+
+--- The locals query of `lang`: the runtime's, else the bundled fallback, else nil.
+--- @param lang string
+--- @return vim.treesitter.Query|nil
+function M.locals_query(lang)
+  local q_ok, query = pcall(vim.treesitter.query.get, lang, "locals")
+  if q_ok and query then
+    return query
+  end
+  local src = M.LOCALS_FALLBACK[lang]
+  if not src then
+    return nil
+  end
+  if fallback_queries[lang] == nil then
+    local ok, parsed = pcall(vim.treesitter.query.parse, lang, src)
+    fallback_queries[lang] = ok and parsed or false
+  end
+  return fallback_queries[lang] or nil
+end
+
 --- Whether the buffer declares `name` (a @local.definition* capture of the
 --- locals query with that text). False without a locals query: a highlight
 --- capture alone cannot tell a project's `count` from lua's `error` or C's
@@ -222,8 +268,8 @@ end
 --- @param name string
 --- @return boolean
 local function declared(ltree, bufnr, name)
-  local q_ok, query = pcall(vim.treesitter.query.get, ltree:lang(), "locals")
-  if not q_ok or not query then
+  local query = M.locals_query(ltree:lang())
+  if not query then
     return false
   end
   for _, tstree in ipairs(ltree:trees()) do

@@ -117,6 +117,7 @@ require("devdocs").setup({opts})
                       textDocument/hover; a visual selection or an explicit
                       text argument always opens the docs. From treesitter
                       alone a name is a variable only when the locals query
+                      (nvim-treesitter's, else one bundled for lua and c)
                       finds its declaration in the buffer. Only the word
                       under the cursor is classified (on whitespace or
                       punctuation the docs open). An empty hover falls

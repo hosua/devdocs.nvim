@@ -170,8 +170,9 @@ describe("classify.cursor (treesitter only, names not declared in the buffer)", 
     eq("variable", at(buf, 2, "n;"))
   end)
 
-  it("downgrades a treesitter variable to symbol when the language has no locals query", function()
-    local buf = buffer("lua", { "local count = 1", "print(count)" })
+  --- Run fn as if the runtime had no locals.scm (Neovim's own runtime has none
+  --- for lua or c; only nvim-treesitter adds them).
+  local function without_runtime_locals(fn)
     local orig = vim.treesitter.query.get
     vim.treesitter.query.get = function(lang, name)
       if name == "locals" then
@@ -179,11 +180,60 @@ describe("classify.cursor (treesitter only, names not declared in the buffer)", 
       end
       return orig(lang, name)
     end
-    local ok, err = pcall(function()
-      eq("symbol", at(buf, 2, "count"))
-    end)
+    local ok, err = pcall(fn)
     vim.treesitter.query.get = orig
     assert(ok, err)
+  end
+
+  it("uses the bundled declarations when the runtime has no locals query (lua, c)", function()
+    without_runtime_locals(function()
+      local buf = buffer("lua", {
+        "local count, other = 1, 2",
+        "local function helper(param, ...) return param end",
+        "for i, v in ipairs({}) do print(i, v) end",
+        "for n = 1, 2 do print(n) end",
+        "print(count, other, error)",
+        "local t = { k = 1 }",
+      })
+      eq("variable", at(buf, 5, "count"))
+      eq("variable", at(buf, 5, "other"))
+      eq("variable", at(buf, 2, "param", 2))
+      eq("variable", at(buf, 3, "i,", 2))
+      eq("variable", at(buf, 4, "n)"))
+      eq("symbol", at(buf, 5, "error"))
+      eq("symbol", at(buf, 6, "k"))
+      local c = buffer("c", {
+        "int f(int n, char **argv) {",
+        "  int total = n, arr[2];",
+        "  int plain;",
+        "  return errno + total + plain + argv[0][0] + arr[0];",
+        "}",
+      })
+      eq("variable", at(c, 4, "total"))
+      eq("variable", at(c, 4, "plain"))
+      eq("variable", at(c, 4, "argv"))
+      eq("variable", at(c, 4, "arr"))
+      eq("variable", at(c, 2, "n,"))
+      eq("symbol", at(c, 4, "errno"))
+    end)
+  end)
+
+  it("downgrades a treesitter variable to symbol when the language has no locals query at all", function()
+    local buf = buffer("lua", { "local count = 1", "print(count)" })
+    local saved = classify.LOCALS_FALLBACK.lua
+    classify.LOCALS_FALLBACK.lua = nil
+    local ok, err = pcall(without_runtime_locals, function()
+      eq("symbol", at(buf, 2, "count"))
+    end)
+    classify.LOCALS_FALLBACK.lua = saved
+    assert(ok, err)
+  end)
+
+  it("parses every bundled declaration query with the parsers Neovim ships", function()
+    for lang, src in pairs(classify.LOCALS_FALLBACK) do
+      local ok, err = pcall(vim.treesitter.query.parse, lang, src)
+      assert(ok, lang .. ": " .. tostring(err))
+    end
   end)
 
   it("keeps a semantic-token variable even when the buffer does not declare it", function()

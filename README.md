@@ -173,7 +173,8 @@ of name it is (`lookup.smart`, on by default). LSP semantic tokens answer when
 the server sends them (`defaultLibrary` marks library names); otherwise the
 treesitter highlight captures of the buffer's parser do. Treesitter alone only
 calls a name a project variable when the buffer's locals query finds where it
-is declared, so a library name used as a value (`error` in `pcall(error, 'x')`,
+is declared (nvim-treesitter's; Neovim itself ships none, so for lua and c the
+plugin bundles a small one), so a library name used as a value (`error` in `pcall(error, 'x')`,
 C's `errno`) still goes to the docs first. Only the word the cursor is on is
 classified: on whitespace or punctuation the lookup is a plain doc lookup.
 
