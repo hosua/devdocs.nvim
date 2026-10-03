@@ -117,6 +117,44 @@ describe("index", function()
     }, index.examples_markdown(blocks))
   end)
 
+  it("keeps a ```` block whose code has ``` lines as one example", function()
+    -- wagtail~2 contributing/documentation_guidelines: markdown shown as code
+    local blocks = index.code_blocks {
+      "**Use code blocks:**",
+      "",
+      "````python",
+      "```python",
+      "print(1)",
+      "```",
+      "````",
+      "",
+      "Then:",
+      "",
+      "```sh",
+      "echo",
+      "```",
+    }
+    eq(2, #blocks)
+    eq({ "```python", "print(1)", "```" }, blocks[1].lines)
+    local md = index.examples_markdown(blocks)
+    eq({
+      "**Use code blocks:**",
+      "````python",
+      "```python",
+      "print(1)",
+      "```",
+      "````",
+      "",
+      "**Then:**",
+      "```sh",
+      "echo",
+      "```",
+    }, md)
+    -- the examples view steps over exactly two examples
+    local headings = require "devdocs.headings"
+    eq({ { line = 1, level = 1 }, { line = 8, level = 1 } }, headings.blocks(md))
+  end)
+
   it("titles, breadcrumbs and entry lookup", function()
     eq("os.path — paths", index.title(PAGE))
     eq(nil, index.title { "no heading" })

@@ -164,6 +164,8 @@ function M.code_blocks(lines)
 end
 
 --- Markdown for the examples of a section: each block with its caption.
+--- A block whose code contains ``` is fenced with ```` (like convert does),
+--- so its inner fence lines stay code.
 --- @param blocks DevDocsCodeBlock[]
 --- @return string[]
 function M.examples_markdown(blocks)
@@ -172,9 +174,16 @@ function M.examples_markdown(blocks)
     if b.caption ~= "" then
       out[#out + 1] = ("**%s**"):format(b.caption)
     end
-    out[#out + 1] = "```" .. b.lang
+    local fence = "```"
+    for _, l in ipairs(b.lines) do
+      if l:find("```", 1, true) then
+        fence = "````"
+        break
+      end
+    end
+    out[#out + 1] = fence .. b.lang
     vim.list_extend(out, b.lines)
-    out[#out + 1] = "```"
+    out[#out + 1] = fence
     if i < #blocks then
       out[#out + 1] = ""
     end
