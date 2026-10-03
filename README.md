@@ -7,7 +7,7 @@ cursor opens its page in a float, examples come up on their own, every
 installed doc is grepped with ripgrep, and a Mason-like manager installs,
 updates and removes docs.
 
-![Looking up std::cout: the viewer float opens on its entry, e narrows to the examples, backspace returns, p opens the whole page](docs/media/lookup-demo.gif)
+![Looking up std::cout: the viewer float opens the whole entry, e narrows to the examples, backspace returns, p paginates the page at the cursor](docs/media/lookup-demo.gif)
 
 The data comes from the same files devdocs' own `thor docs:download` uses
 (one tarball per doc from `downloads.devdocs.io`, the docs list from
@@ -202,6 +202,10 @@ page that holds the next heading, with the cursor on it at the top; turning
 pages is not on the history, `p` and `e` are (`<BS>` undoes them). In the
 examples view they step between examples. `n`/`N` do not repeat a search in
 the viewer: use `/<CR>` and `?<CR>`.
+
+![Looking up assert in the Lua manual: it opens paginated with the page index (180/256) in the title and p pages in the footer, n turns the page twice, c jumps to the next chapter, p shows the whole page (p paginated), p goes back to the paginated view](docs/media/viewer-paging.gif)
+
+![The ? help in the viewer: an aligned Key and Action table with a bold header row and the keys spelled out, such as Backspace (<BS>)](docs/media/viewer-help.png)
 
 ![The viewer after pressing e: only the examples of the std::cout section](docs/media/viewer-examples.png)
 
