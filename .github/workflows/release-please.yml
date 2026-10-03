@@ -1,0 +1,40 @@
+# Managed by the gh-releases-project-setup skill.
+# On every push to the default branch, release-please either opens/updates a
+# "Release PR" (version bump + CHANGELOG.md) or, when that PR was just merged,
+# creates the git tag and the GitHub Release.
+name: release-please
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+# Least privilege: these three scopes are all release-please needs.
+permissions:
+  contents: write       # push the release branch, create tags + releases
+  pull-requests: write  # open and update the Release PR
+  issues: write         # create/apply the "autorelease: pending" labels
+
+# Never run two release jobs at once (two quick merges would race on the PR).
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
+        id: release
+        with:
+          # Optional: add a repo secret RELEASE_PLEASE_TOKEN (fine-grained PAT)
+          # so CI runs on the Release PR without manual approval. Falls back to
+          # the built-in token when the secret is absent.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
