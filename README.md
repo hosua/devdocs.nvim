@@ -141,7 +141,7 @@ One command with subcommands, plus flat aliases for each action.
 |---|---|---|
 | `definition [text]` | `:DevDocsShowDefinition` | page/section for the symbol under the cursor, the visual selection, or `text` |
 | `example [text]` | `:DevDocsShowExample` | only the code examples of that entry |
-| `open [doc] [entry]` | `:DevDocsOpen` | without an entry, the doc's **index**: its types (API, Language, …) with entry counts, expandable into entries, like devdocs.io's sidebar. Without a doc, the current buffer's doc (the version its project uses). With an entry (`python os.path.join`), that entry. A doc is a slug or name (`python`, `css`, `node~22_lts`) |
+| `open [doc] [entry]` | `:DevDocsOpen` | without an entry, the doc's **index**: its types (API, Language, …) with entry counts, expandable into entries, like devdocs.io's sidebar. Without a doc, the current buffer's doc (the version its project uses); with no file open (or one with no docs), the manager, where `<CR>` opens a doc's index. With an entry (`python os.path.join`), that entry. A doc is a slug or name (`python`, `css`, `node~22_lts`) |
 | `search [query]` | `:DevDocsSearch` | grep the buffer's docs, then the newest version of every other enabled doc; `@css …` narrows to one doc (any version: `@python~3.9`) |
 | `list` | `:DevDocsList` | the manager |
 | `install [doc]` | `:DevDocsInstall` | docs for the current buffer (right version), or a named doc. `!` reinstalls |
@@ -258,8 +258,8 @@ has. The columns:
 | `gD` | the same for every language, like `:DevDocs prune` (asks) |
 | `u` / `U` | update it (a language: its outdated versions) / every outdated doc |
 | `e` | enable / disable it for lookups and search |
-| `<CR>`, double-click | open in the viewer |
-| `o` | open on devdocs.io |
+| `<CR>`, double-click | open the doc's index in the viewer; `<BS>` there comes back to the manager |
+| `o` | open the doc's index on devdocs.io in the browser instead |
 | `/` | live filter (`<Esc>` clears, `<CR>` keeps) |
 | `s` | sort by name / size |
 | `r` | refresh the docs list |

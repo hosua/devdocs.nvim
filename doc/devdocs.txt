@@ -32,7 +32,8 @@ removes docs. The README has the long version.
                          visual selection, or {text}
   example [text]         only the code examples of that entry
   open [doc] [entry]     without an entry, the doc's index (|devdocs-index|);
-                         without a doc, the current buffer's; with an
+                         without a doc, the current buffer's (no file
+                         open: the manager, |devdocs-list|); with an
                          entry, that entry
   search [query]         grep the buffer's docs, then the newest version of
                          every other doc; "@css ..." narrows to one
@@ -241,7 +242,8 @@ directly.
   j k gg G <C-d> <C-u> PgUp PgDn   move        } {    next / previous section
   <Tab> l h   expand versions      i   install     X   uninstall (asks)
   u U         update one / all     e   enable or disable
-  <CR>        open in the viewer   o   open on devdocs.io
+  <CR>        the doc's index      o   the index on devdocs.io
+              (<BS> there comes back here)
   /           live filter          s   sort by name / size
   r           refresh the list     A   install every doc (asks)
   m M         mark / clear marks   S :w  apply marks (install + uninstall)

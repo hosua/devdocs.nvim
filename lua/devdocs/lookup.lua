@@ -286,7 +286,7 @@ end
 
 --- The doc `:DevDocs open` means without a name, handed to `cb`: the
 --- current buffer's doc (the version its project uses), else the doc in the
---- viewer, else a choice among the installed docs.
+--- viewer, else (no file open, or one with no docs) the manager instead.
 --- @param cb fun(slug: string)
 local function with_default_doc(cb)
   local b = detect.buffer()
@@ -299,21 +299,8 @@ local function with_default_doc(cb)
     cb(view.slug)
     return
   end
-  local slugs = detect.newest_slugs()
-  if #slugs == 0 then
-    notify("no docs installed (:DevDocs install)", vim.log.levels.WARN)
-    return
-  end
-  vim.ui.select(slugs, {
-    prompt = "DevDocs index of:",
-    format_item = function(slug)
-      return index.breadcrumb(slug, nil)
-    end,
-  }, function(choice)
-    if choice then
-      cb(choice)
-    end
-  end)
+  -- no file (or one with no docs): the manager, where <CR> opens a doc's index
+  require("devdocs.ui.list").open()
 end
 
 --- The index of an installed doc, or one entry of it.

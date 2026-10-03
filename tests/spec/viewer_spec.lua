@@ -1238,6 +1238,41 @@ describe("viewer index (glossary view)", function()
     viewer.close()
   end)
 
+  it("<BS> with no history runs on_back (the manager's way back) and closes the index", function()
+    local slug = lua_doc()
+    local back = 0
+    viewer.open_index(slug, {
+      on_back = function()
+        back = back + 1
+      end,
+    })
+    local e = entry_of(slug, "table.insert()")
+    viewer.open_index(slug, {
+      path = e.path,
+      name = e.name,
+      on_back = function()
+        back = back + 100 -- not a fresh float: ignored
+      end,
+    })
+    press "<CR>"
+    eq("section", mode())
+    viewer.back()
+    eq("index", mode())
+    viewer.back()
+    vim.wait(200, function()
+      return back > 0
+    end)
+    eq(1, back)
+    eq(nil, viewer.current_view())
+    -- without on_back, <BS> on an empty history only says so
+    viewer.open_index(slug)
+    local msgs = capture(function()
+      viewer.back()
+    end)
+    ok(msgs[1] and msgs[1]:find("no previous page", 1, true), vim.inspect(msgs))
+    viewer.close()
+  end)
+
   it("opens the index of an entry given to open_index, with the entry marked", function()
     local slug = lua_doc()
     local e = entry_of(slug, "table.insert()")

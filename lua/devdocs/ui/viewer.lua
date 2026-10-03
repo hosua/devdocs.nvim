@@ -743,6 +743,13 @@ function M.back()
   end
   local prev = table.remove(current.history)
   if not prev then
+    -- opened from somewhere with its own way back (the manager's <CR>)
+    local on_back = current.on_back
+    if on_back then
+      M.close()
+      vim.schedule(on_back)
+      return
+    end
     notify "no previous page"
     return
   end
@@ -843,8 +850,10 @@ end
 --- in. With `opts.path` (and `opts.name`) the entry's type is expanded, the
 --- cursor lands on the entry and it is marked ●. Goes on the history when a
 --- viewer is open (and is not already this doc's index).
+--- `opts.on_back` is what <BS> does once the history is empty (the manager
+--- passes itself), kept only when this opens a new float.
 --- @param slug string
---- @param opts { path?: string, name?: string }|nil
+--- @param opts { path?: string, name?: string, on_back?: fun() }|nil
 function M.open_index(slug, opts)
   opts = opts or {}
   if not store.is_installed(slug) then
@@ -864,7 +873,11 @@ function M.open_index(slug, opts)
   last[slug], last_row[slug] = state, row
   local view = { slug = slug, path = "", mode = "index", index = state, entry = mark, line = row }
   local here = current and current.view
+  local fresh = current == nil
   show(view, current ~= nil and not (here.mode == "index" and here.slug == slug))
+  if fresh and current then
+    current.on_back = opts.on_back
+  end
 end
 
 --- I: from a page, the index of its doc with the page's entry shown; in the

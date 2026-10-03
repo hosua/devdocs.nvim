@@ -696,8 +696,10 @@ describe("lookup.open without an entry (the index)", function()
   --- Run fn with the viewer, detect and ui.select stubbed; returns what was called.
   --- @param o { buffer_slugs?: string[], viewer_slug?: string, newest?: string[], choose?: string, installed?: string[] }
   local function scenario(o, fn)
-    local calls = { index = {}, open = {}, notify = {}, select = nil }
+    local calls = { index = {}, open = {}, notify = {}, select = nil, list = 0 }
+    local list = require "devdocs.ui.list"
     local saved = {
+      list_open = list.open,
       open_index = viewer.open_index,
       open = viewer.open,
       current = viewer.current_view,
@@ -712,6 +714,9 @@ describe("lookup.open without an entry (the index)", function()
     }
     viewer.open_index = function(slug, opts)
       table.insert(calls.index, { slug = slug, opts = opts })
+    end
+    list.open = function()
+      calls.list = calls.list + 1
     end
     viewer.open = function(view)
       table.insert(calls.open, view)
@@ -747,6 +752,7 @@ describe("lookup.open without an entry (the index)", function()
       end
     end
     local ok_run, err = pcall(fn, calls)
+    list.open = saved.list_open
     viewer.open_index = saved.open_index
     viewer.open = saved.open
     viewer.current_view = saved.current
@@ -805,32 +811,22 @@ describe("lookup.open without an entry (the index)", function()
     eq(nil, calls.select)
   end)
 
-  it("asks which doc when there is no buffer doc and no viewer", function()
-    local calls = scenario({ newest = { "lua~5.4", "python~3.12" }, choose = "python~3.12" }, function()
-      lookup.open(nil, nil)
-    end)
-    eq({ "lua~5.4", "python~3.12" }, calls.select.items)
-    eq("DevDocs index of:", calls.select.opts.prompt)
-    eq("python~3.12", calls.index[1].slug)
-  end)
-
-  it("opens nothing when the choice is cancelled", function()
+  it("opens the manager when there is no buffer doc and no viewer (no file open)", function()
     local calls = scenario({ newest = { "lua~5.4", "python~3.12" } }, function()
       lookup.open(nil, nil)
     end)
+    eq(1, calls.list)
     eq(0, #calls.index)
+    eq(nil, calls.select)
     eq(0, #calls.notify)
   end)
 
-  it("warns when no docs are installed", function()
+  it("opens the manager even when no docs are installed (it installs them)", function()
     local calls = scenario({ newest = {}, installed = {} }, function()
       lookup.open(nil, nil)
     end)
+    eq(1, calls.list)
     eq(0, #calls.index)
-    eq(nil, calls.select)
-    ok(calls.notify[1] and calls.notify[1].msg:find("no docs installed", 1, true), vim.inspect(calls.notify))
-    ok(calls.notify[1].msg:find(":DevDocs install", 1, true), calls.notify[1].msg)
-    eq(vim.log.levels.WARN, calls.notify[1].level)
   end)
 
   it("warns about a doc that is not installed and opens no index", function()
