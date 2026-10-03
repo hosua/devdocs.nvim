@@ -129,6 +129,24 @@ function M.check()
   else
     h.info("docs list not fetched yet (" .. cfg.install.manifest_url .. ")")
   end
+  local releases = require "devdocs.releases"
+  local rs = releases.cache_status()
+  if not rs.enabled then
+    h.info "release dates: off (list.release_dates = false); the list shows DevDocs build dates (≈)"
+  elseif rs.products == 0 then
+    h.info "release dates: nothing cached yet (fetched from endoflife.date when :DevDocs list opens)"
+  else
+    h.ok(
+      ("release dates: %d products cached from endoflife.date, oldest %d days old (refreshed after %d)"):format(
+        rs.products,
+        math.floor((os.time() - rs.oldest) / 86400),
+        releases.TTL / 86400
+      )
+    )
+  end
+  if releases.last_error then
+    h.info("release dates: last fetch failed: " .. releases.last_error)
+  end
   h.info(
     ("source: %s from %s"):format(
       cfg.install.source,

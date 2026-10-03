@@ -84,6 +84,12 @@ M.defaults = {
     scope = "buffer",
   },
 
+  list = {
+    -- Show when each doc's version was released upstream, from endoflife.date
+    -- (cached for a week). false: no network calls; the list shows DevDocs build dates (≈).
+    release_dates = true,
+  },
+
   -- filetype -> { slug bases }, merged over the built-in table (lua/devdocs/langmap.lua).
   extra_filetypes = {},
   -- Mason package name -> { slug bases }, merged over the built-in table.
@@ -140,6 +146,7 @@ local function validate(cfg)
   vim.validate("lookup.scope", cfg.lookup.scope, function(v)
     return v == "buffer" or v == "all"
   end, "'buffer' or 'all'")
+  vim.validate("list.release_dates", cfg.list.release_dates, "boolean")
 end
 
 --- @param opts table|nil
