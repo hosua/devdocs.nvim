@@ -661,6 +661,10 @@ function M.help()
   current.float:set_lines(lines)
   apply_links(current.float.buf, {})
   float.highlight(current.float.buf, NS, spans)
+  -- the page under may have been scrolled: show the help from its title
+  vim.api.nvim_win_call(current.float.win, function()
+    vim.fn.winrestview { topline = 1, lnum = 1, col = 0 }
+  end)
   current.float:set_title("DevDocs help", { { "⌫", "back" }, { "q", "close" } })
 end
 
