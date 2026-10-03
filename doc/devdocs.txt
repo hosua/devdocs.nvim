@@ -111,7 +111,12 @@ require("devdocs").setup({opts})
                       (semantic token modifier defaultLibrary) still open
                       the docs. Needs a client that implements
                       textDocument/hover; a visual selection or an explicit
-                      text argument always opens the docs
+                      text argument always opens the docs. From treesitter
+                      alone a name is a variable only when the locals query
+                      finds its declaration in the buffer. Only the word
+                      under the cursor is classified (on whitespace or
+                      punctuation the docs open). An empty hover falls
+                      through to the docs
 
 A lookup's language comes from the filetype, then the file extension, the
 shebang, then shell dotfiles (as $SHELL). Its version, for docs with several

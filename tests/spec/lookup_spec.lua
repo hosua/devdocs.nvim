@@ -11,9 +11,15 @@ local viewer = require "devdocs.ui.viewer"
 local HIT = { slug = "lua~5.4", entry = { name = "count", path = "index#count" } }
 
 --- Run fn with lookup's collaborators stubbed; returns what was called.
---- @param o { class?: string, hover?: boolean, hits?: table[], sources?: integer, smart?: boolean, fallback?: string }
+--- Hover responses per client id, as vim.lsp.buf_request_all hands them over.
+local HOVER = { [1] = { result = { contents = { kind = "markdown", value = "count: integer" } } } }
+
+--- Run fn with lookup's collaborators stubbed; returns what was called.
+--- `hover_results` is what the hover request answers (default HOVER); `calls.hover`
+--- counts hover requests and `calls.float` the hover windows shown.
+--- @param o { class?: string, hover?: boolean, hover_results?: table, hits?: table[], sources?: integer, smart?: boolean, fallback?: string }
 local function scenario(o, fn)
-  local calls = { classify = 0, hover = 0, docs = 0, open = 0, search = {}, notify = {} }
+  local calls = { classify = 0, hover = 0, float = {}, docs = 0, open = 0, search = {}, notify = {} }
   local saved = {
     cursor = classify.cursor,
     candidates = symbols.candidates,
@@ -26,6 +32,8 @@ local function scenario(o, fn)
     pick = picker.pick_hits,
     clients = vim.lsp.get_clients,
     hover = vim.lsp.buf.hover,
+    request_all = vim.lsp.buf_request_all,
+    float = vim.lsp.util.open_floating_preview,
     notify = vim.notify,
     search = require("devdocs").search,
   }
@@ -70,6 +78,15 @@ local function scenario(o, fn)
   vim.lsp.buf.hover = function()
     calls.hover = calls.hover + 1
   end
+  vim.lsp.buf_request_all = function(_, method, params, handler)
+    calls.hover = calls.hover + 1
+    calls.method = method
+    calls.params = type(params) == "function" and params({ id = 1, offset_encoding = "utf-16" }, 0) or params
+    handler(o.hover_results or HOVER)
+  end
+  vim.lsp.util.open_floating_preview = function(lines, syntax)
+    table.insert(calls.float, { lines = lines, syntax = syntax })
+  end
   vim.notify = function(msg)
     table.insert(calls.notify, msg)
   end
@@ -90,6 +107,8 @@ local function scenario(o, fn)
   picker.pick_hits = saved.pick
   vim.lsp.get_clients = saved.clients
   vim.lsp.buf.hover = saved.hover
+  vim.lsp.buf_request_all = saved.request_all
+  vim.lsp.util.open_floating_preview = saved.float
   vim.notify = saved.notify
   require("devdocs").search = saved.search
   config.resolve()
@@ -107,6 +126,62 @@ describe("lookup.run smart fallback", function()
     eq(1, c.hover)
     eq(0, c.docs)
     eq(0, c.open)
+    eq("textDocument/hover", c.method)
+    eq({ { lines = { "count: integer" }, syntax = "markdown" } }, c.float)
+  end)
+
+  it("sends the cursor position with the hover request", function()
+    local c = scenario({ class = "variable", hover = true }, function()
+      lookup.run "section"
+    end)
+    eq(true, c.params.position ~= nil and c.params.textDocument ~= nil)
+  end)
+
+  it("falls back to the docs when the hover comes back empty", function()
+    for _, results in ipairs {
+      {},
+      { [1] = { result = nil } },
+      { [1] = { result = { contents = "" } } },
+      { [1] = { result = { contents = { kind = "markdown", value = "  \n" } } } },
+      { [1] = { result = { contents = {} } } },
+      { [1] = { err = { code = -32601, message = "nope" } }, [2] = { result = nil } },
+    } do
+      local c = scenario({ class = "variable", hover = true, hover_results = results, hits = { HIT } }, function()
+        lookup.run "section"
+      end)
+      eq(1, c.hover, vim.inspect(results))
+      eq({}, c.float, vim.inspect(results))
+      eq(1, c.open, vim.inspect(results))
+    end
+  end)
+
+  it("uses the configured fallback when the hover is empty and the docs have nothing", function()
+    local c = scenario({ class = "variable", hover = true, hover_results = {}, hits = {} }, function()
+      lookup.run "section"
+    end)
+    eq({}, c.float)
+    eq({ "@lua~5.4 count" }, c.search)
+  end)
+
+  it("shows the non-empty answers when some clients have nothing", function()
+    local results = {
+      [1] = { result = { contents = "" } },
+      [2] = { err = { code = 1, message = "x" } },
+      [3] = { result = { contents = { kind = "plaintext", value = "from three" } } },
+    }
+    local c = scenario({ class = "variable", hover = true, hover_results = results, hits = { HIT } }, function()
+      lookup.run "section"
+    end)
+    eq(1, #c.float)
+    eq(0, c.open)
+  end)
+
+  it("does not classify when no client can hover", function()
+    local c = scenario({ class = "variable", hover = false, hits = { HIT } }, function()
+      lookup.run "section"
+    end)
+    eq(0, c.classify)
+    eq(1, c.open)
   end)
 
   it("does the same for examples", function()
@@ -156,7 +231,25 @@ describe("lookup.run smart fallback", function()
       lookup.run "section"
     end)
     eq(1, c.hover)
+    eq(1, #c.float)
     eq({}, c.search)
+  end)
+
+  it("uses the configured fallback for a project symbol whose hover is empty", function()
+    local c = scenario({ class = "symbol", hover = true, hover_results = {}, hits = {} }, function()
+      lookup.run "section"
+    end)
+    eq(1, c.hover)
+    eq({}, c.float)
+    eq({ "@lua~5.4 count" }, c.search)
+  end)
+
+  it("explains the missing docs for a project symbol whose hover is empty", function()
+    local c = scenario({ class = "symbol", hover = true, hover_results = {}, sources = 0 }, function()
+      lookup.run "section"
+    end)
+    eq({}, c.float)
+    eq(1, #c.notify)
   end)
 
   it("hovers a project symbol when no docs are installed", function()

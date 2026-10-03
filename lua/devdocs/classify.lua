@@ -9,7 +9,9 @@
 ---   "keyword"  language keyword or operator word (local, return, sizeof)
 ---   "builtin"  treesitter *.builtin capture (print, int, nil, self)
 ---   "library"  semantic token with the defaultLibrary modifier
----   "variable" a local, parameter or field the project declared
+---   "variable" a local, parameter or field the project declared (from
+---              treesitter only when the locals query finds its definition
+---              in the buffer)
 ---   "symbol"   a project function/type, or a variable that is part of a
 ---              chain (`t.field`, `vim.api`): docs first, hover when they
 ---              have nothing
@@ -20,6 +22,9 @@ local M = {}
 
 --- Separators that make the word after them a member of what precedes it.
 local MEMBER_SEPS = { "::", "->", ".", ":" }
+--- Languages where a single ":" calls a method (`obj:method()`); elsewhere it
+--- is a slice, a ternary, a label or a type annotation.
+local COLON_METHOD_LANGS = { lua = true }
 --- A member of these is the object's own state, so it is a project variable.
 local SELF_NAMES = { self = true, this = true, cls = true }
 
@@ -39,26 +44,25 @@ local SEMANTIC_SYMBOLS = {
   event = true,
 }
 
+--- Identifier bytes: ASCII word characters and every byte of a multibyte
+--- UTF-8 character, so `café` stays one word.
+local WORD_CLASS = "[%w_\128-\255]"
+
 local function is_word_char(ch)
-  return ch ~= "" and ch:match "[%w_]" ~= nil
+  return ch ~= "" and ch:match(WORD_CLASS) ~= nil
 end
 
---- 0-based inclusive byte range of the identifier at `col`, or of the next one
---- on the line when the cursor is on whitespace/punctuation (what <cword> does).
+--- 0-based inclusive byte range of the identifier at `col`, or nil when the
+--- cursor is not on one. Unlike <cword> it never jumps ahead to the next word:
+--- LSP hover asks about the cursor position itself, so classifying a word the
+--- cursor is not on would send hover somewhere else.
 --- @param line string
 --- @param col integer 0-based
 --- @return integer|nil start, integer|nil finish
 function M.word_at(line, col)
   local i = col + 1
-  if i > #line then
+  if i > #line or not is_word_char(line:sub(i, i)) then
     return nil
-  end
-  if not is_word_char(line:sub(i, i)) then
-    local next_at = line:find("[%w_]", i)
-    if not next_at then
-      return nil
-    end
-    i = next_at
   end
   local s, e = i, i
   while s > 1 and is_word_char(line:sub(s - 1, s - 1)) do
@@ -72,24 +76,29 @@ end
 
 --- Whether the word at [s, e] (0-based, inclusive) is a member reached through
 --- a separator (`t.field`, `p->x`) and whether it heads a chain (`vim` in
---- `vim.api`). A member of self/this counts as neither.
+--- `vim.api`). A member of self/this counts as neither. A single ":" is member
+--- access only in `lang`s where it calls a method (lua).
 --- @param line string
 --- @param s integer
 --- @param e integer
+--- @param lang string|nil filetype of the line
 --- @return { qualified: boolean, chain_head: boolean }
-function M.context(line, s, e)
+function M.context(line, s, e, lang)
+  local colon_method = COLON_METHOD_LANGS[lang or ""] == true
   local before = line:sub(1, s)
   local after = line:sub(e + 2)
   local qualified = false
   for _, sep in ipairs(MEMBER_SEPS) do
-    if before:sub(-#sep) == sep then
+    -- "::" is checked first, so a lone ":" here is never half of it
+    local colon = sep == ":"
+    if before:sub(-#sep) == sep and (colon_method or not colon) then
       local rest = before:sub(1, -#sep - 1)
       -- `...args` and lua's `a..b` are not member access
       local dotted = sep == "." and rest:sub(-1) == "."
       -- `{ a: 1 }`, `x ? a : b`: a ":" only qualifies when glued to a name
       local loose = sep == ":" and not is_word_char(rest:sub(-1))
       if not dotted and not loose then
-        local owner = rest:match "([%w_]+)$"
+        local owner = rest:match("(" .. WORD_CLASS .. "+)$")
         qualified = not (owner and SELF_NAMES[owner])
       end
       break
@@ -98,7 +107,7 @@ function M.context(line, s, e)
   local chain_head = after:match "^%.[%a_]" ~= nil
     or after:match "^::" ~= nil
     or after:match "^%->" ~= nil
-    or after:match "^:[%a_]" ~= nil
+    or (colon_method and after:match "^:[%a_]" ~= nil)
   return { qualified = qualified, chain_head = chain_head }
 end
 
@@ -169,19 +178,26 @@ function M.from_semantic(tokens, ctx)
   return best
 end
 
---- Highlight capture names covering (row, col), from the buffer's parser and
---- the highlights query; independent of whether highlighting is enabled.
---- @return string[]
-local function captures(bufnr, row, col)
+--- The buffer's parsed language tree at (row, col), or nil.
+--- @return vim.treesitter.LanguageTree|nil
+local function language_tree(bufnr, row, col)
   local ok, parser = pcall(vim.treesitter.get_parser, bufnr, nil, { error = false })
   if not ok or not parser then
-    return {}
+    return nil
   end
   pcall(parser.parse, parser, { row, row + 1 })
   local tree_ok, ltree = pcall(parser.language_for_range, parser, { row, col, row, col })
   if not tree_ok or not ltree then
-    return {}
+    return nil
   end
+  return ltree
+end
+
+--- Highlight capture names covering (row, col), from the highlights query;
+--- independent of whether highlighting is enabled.
+--- @param ltree vim.treesitter.LanguageTree
+--- @return string[]
+local function captures(ltree, bufnr, row, col)
   local q_ok, query = pcall(vim.treesitter.query.get, ltree:lang(), "highlights")
   if not q_ok or not query then
     return {}
@@ -195,6 +211,51 @@ local function captures(bufnr, row, col)
     end
   end
   return names
+end
+
+--- Whether the buffer declares `name` (a @local.definition* capture of the
+--- locals query with that text). False without a locals query: a highlight
+--- capture alone cannot tell a project's `count` from lua's `error` or C's
+--- `errno` used as a value.
+--- @param ltree vim.treesitter.LanguageTree
+--- @param name string
+--- @return boolean
+local function declared(ltree, bufnr, name)
+  local q_ok, query = pcall(vim.treesitter.query.get, ltree:lang(), "locals")
+  if not q_ok or not query then
+    return false
+  end
+  for _, tstree in ipairs(ltree:trees()) do
+    for id, node in query:iter_captures(tstree:root(), bufnr, 0, -1) do
+      local cap = query.captures[id]
+      if
+        (cap == "local.definition" or cap:sub(1, 17) == "local.definition.")
+        and vim.treesitter.get_node_text(node, bufnr) == name
+      then
+        return true
+      end
+    end
+  end
+  return false
+end
+
+--- Class from treesitter alone: a "variable" must be declared in the buffer,
+--- else it may be a library name and the docs go first ("symbol").
+--- @return DevDocsTokenClass
+local function from_treesitter(bufnr, row, s, e, line, ctx)
+  local ltree = language_tree(bufnr, row, s)
+  if not ltree then
+    return "unknown"
+  end
+  local cap_ok, names = pcall(captures, ltree, bufnr, row, s)
+  local class = M.from_captures(cap_ok and names or {}, ctx)
+  if class == "variable" then
+    local d_ok, is_declared = pcall(declared, ltree, bufnr, line:sub(s + 1, e + 1))
+    if not (d_ok and is_declared) then
+      return "symbol"
+    end
+  end
+  return class
 end
 
 --- Class of the identifier at (row, col) of `bufnr`.
@@ -211,14 +272,14 @@ function M.at(bufnr, row, col)
   if not s then
     return "unknown"
   end
-  local ctx = M.context(line, s, e)
+  local ctx = M.context(line, s, e, vim.bo[bufnr].filetype)
+  -- Semantic tokens know the whole program: their "variable" needs no check.
   local ok, tokens = pcall(vim.lsp.semantic_tokens.get_at_pos, bufnr, row, s)
   local class = ok and M.from_semantic(tokens, ctx) or nil
   if class then
     return class
   end
-  local cap_ok, names = pcall(captures, bufnr, row, s)
-  return M.from_captures(cap_ok and names or {}, ctx)
+  return from_treesitter(bufnr, row, s, e, line, ctx)
 end
 
 --- Class of the identifier under the cursor; "unknown" unless `bufnr` is the

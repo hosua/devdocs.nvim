@@ -85,8 +85,9 @@ M.defaults = {
     -- On :DevDocs definition / example, tell keywords and library names from the project's
     -- own names (LSP semantic tokens, else treesitter): a local variable, parameter or field
     -- shows vim.lsp.buf.hover() instead of a doc page, and a project function the docs do not
-    -- know shows hover before `fallback`. Only when an attached client can hover; a visual
-    -- selection or an explicit argument always looks up the docs.
+    -- know shows hover before `fallback`. Only when an attached client can hover; an empty
+    -- hover goes on to the docs, and a visual selection or an explicit argument always looks
+    -- up the docs.
     smart = true,
   },
 

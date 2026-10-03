@@ -73,7 +73,10 @@ describe("classify.cursor (treesitter, lua)", function()
     eq("variable", at(buf, 1, "param"))
     eq("variable", at(buf, 2, "param"))
     eq("variable", at(buf, 3, "count"))
-    eq("variable", at(buf, 6, "k"))
+  end)
+
+  it("sends a table key to the docs first (the locals query does not define it)", function()
+    eq("symbol", at(buf, 6, "k")) -- could be a metamethod like __index
   end)
 
   it("is unsure about calls", function()
@@ -88,11 +91,14 @@ describe("classify.cursor (treesitter, lua)", function()
     eq("symbol", at(buf, 3, "vim"))
   end)
 
-  it("classifies the word <cword> would pick when the cursor is on whitespace", function()
+  it("is unknown when the cursor is on whitespace or punctuation (hover would not see the next word)", function()
     vim.api.nvim_win_set_cursor(0, { 2, 0 })
-    eq("keyword", classify.cursor(buf)) -- "  local": the next word is `local`
+    eq("unknown", classify.cursor(buf)) -- "  local": indentation, not `local`
     vim.api.nvim_win_set_cursor(0, { 2, 7 })
-    eq("variable", classify.cursor(buf)) -- the space before `count`
+    eq("unknown", classify.cursor(buf)) -- the space before `count`
+    local line = vim.api.nvim_buf_get_lines(buf, 1, 2, false)[1]
+    vim.api.nvim_win_set_cursor(0, { 2, line:find("=", 1, true) - 1 })
+    eq("unknown", classify.cursor(buf)) -- on `=`
   end)
 
   it("is unknown on empty and blank lines", function()
@@ -133,6 +139,58 @@ describe("classify.cursor (treesitter, c)", function()
     eq("variable", at(buf, 2, "argc"))
     eq("variable", at(buf, 1, "argc"))
     eq("unknown", at(buf, 3, "printf"))
+  end)
+end)
+
+describe("classify.cursor (treesitter only, names not declared in the buffer)", function()
+  it("sends lua library names used as values to the docs first", function()
+    local buf = buffer("lua", {
+      "local ok = pcall(error, 'x')",
+      "local mt = { __index = rawget }",
+      "print(arg)",
+      "local declared = 1",
+      "print(declared)",
+    })
+    eq("symbol", at(buf, 1, "error"))
+    eq("symbol", at(buf, 2, "rawget"))
+    eq("symbol", at(buf, 3, "arg"))
+    eq("variable", at(buf, 5, "declared"))
+    eq("variable", at(buf, 1, "ok"))
+  end)
+
+  it("sends C's errno to the docs first", function()
+    local buf = buffer("c", {
+      "int f(int n) {",
+      "  int local_n = n;",
+      "  return errno + local_n;",
+      "}",
+    })
+    eq("symbol", at(buf, 3, "errno"))
+    eq("variable", at(buf, 3, "local_n"))
+    eq("variable", at(buf, 2, "n;"))
+  end)
+
+  it("downgrades a treesitter variable to symbol when the language has no locals query", function()
+    local buf = buffer("lua", { "local count = 1", "print(count)" })
+    local orig = vim.treesitter.query.get
+    vim.treesitter.query.get = function(lang, name)
+      if name == "locals" then
+        return nil
+      end
+      return orig(lang, name)
+    end
+    local ok, err = pcall(function()
+      eq("symbol", at(buf, 2, "count"))
+    end)
+    vim.treesitter.query.get = orig
+    assert(ok, err)
+  end)
+
+  it("keeps a semantic-token variable even when the buffer does not declare it", function()
+    local buf = buffer("lua", { "print(arg)" })
+    with_tokens({ { type = "variable", modifiers = {} } }, function()
+      eq("variable", at(buf, 1, "arg"))
+    end)
   end)
 end)
 
@@ -246,13 +304,20 @@ describe("classify.from_captures", function()
 end)
 
 describe("classify.word_at", function()
-  it("finds the identifier under or after the cursor", function()
+  it("finds the identifier under the cursor", function()
     eq({ 6, 10 }, { classify.word_at("local count = 1", 7) })
-    eq({ 6, 10 }, { classify.word_at("local count = 1", 5) })
+    eq({}, { classify.word_at("local count = 1", 5) }) -- the space before `count`
+    eq({}, { classify.word_at("local y = count", 9) }) -- the space after `=`
     eq({ 0, 4 }, { classify.word_at("local count = 1", 0) })
     eq({}, { classify.word_at("x = 1;   ", 7) })
     eq({}, { classify.word_at("", 0) })
     eq({}, { classify.word_at("abc", 10) })
+  end)
+
+  it("keeps non-ASCII identifiers whole", function()
+    eq({ 6, 10 }, { classify.word_at("local café = 1", 7) })
+    eq({ 6, 10 }, { classify.word_at("local café = 1", 9) }) -- second byte of `é`
+    eq({ 0, 5 }, { classify.word_at("naïve()", 0) })
   end)
 
   it("says whether the word is qualified or heads a chain", function()
@@ -260,10 +325,20 @@ describe("classify.word_at", function()
     eq({ qualified = false, chain_head = true }, classify.context("vim.api", 0, 2))
     eq({ qualified = false, chain_head = true }, classify.context("std::cout", 0, 2))
     eq({ qualified = true, chain_head = false }, classify.context("p->x", 3, 3))
-    eq({ qualified = true, chain_head = false }, classify.context("obj:method()", 4, 9))
+    eq({ qualified = true, chain_head = false }, classify.context("obj:method()", 4, 9, "lua"))
+    eq({ qualified = false, chain_head = true }, classify.context("obj:method()", 0, 2, "lua"))
     eq({ qualified = false, chain_head = false }, classify.context("self.x", 5, 5)) -- self's own member
     eq({ qualified = false, chain_head = false }, classify.context("f(...args)", 5, 8)) -- spread, not a member
     eq({ qualified = false, chain_head = false }, classify.context("a..b", 3, 3)) -- lua concat
     eq({ qualified = false, chain_head = false }, classify.context("{ a: 1 }", 2, 2))
+  end)
+
+  it("only treats `:` as member access where it calls a method (lua)", function()
+    eq({ qualified = false, chain_head = false }, classify.context("a[lo:hi]", 5, 6, "python")) -- slice
+    eq({ qualified = false, chain_head = false }, classify.context("a[lo:hi]", 2, 3, "python"))
+    eq({ qualified = false, chain_head = false }, classify.context("c ? x:y", 6, 6, "c")) -- ternary
+    eq({ qualified = false, chain_head = false }, classify.context("c ? x:y", 4, 4, "c"))
+    eq({ qualified = false, chain_head = false }, classify.context("obj:method()", 4, 9)) -- no language
+    eq({ qualified = true, chain_head = false }, classify.context("std::cout", 5, 8, "cpp"))
   end)
 end)

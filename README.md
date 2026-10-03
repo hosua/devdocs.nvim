@@ -171,17 +171,23 @@ back searching every installed doc after the buffer's own.
 `definition` and `example` on the word under the cursor first ask what kind
 of name it is (`lookup.smart`, on by default). LSP semantic tokens answer when
 the server sends them (`defaultLibrary` marks library names); otherwise the
-treesitter highlight captures of the buffer's parser do.
+treesitter highlight captures of the buffer's parser do. Treesitter alone only
+calls a name a project variable when the buffer's locals query finds where it
+is declared, so a library name used as a value (`error` in `pcall(error, 'x')`,
+C's `errno`) still goes to the docs first. Only the word the cursor is on is
+classified: on whitespace or punctuation the lookup is a plain doc lookup.
 
 | under the cursor | what happens |
 |---|---|
 | keyword, builtin, library name (`return`, `int`, `print`, `printf`) | the doc page, as always |
-| a local variable, parameter or field the project declared (`count` in `local count = 1`) | `vim.lsp.buf.hover()`, no doc lookup |
-| a project function or type, or a variable in a chain (`helper()`, `os.sep`, `t.field`) | the doc page when there is one, else hover, else `lookup.fallback` |
+| a local variable, parameter or field the project declared (`count` in `local count = 1`) | LSP hover, no doc lookup (the docs when the hover is empty) |
+| a project function or type, a variable in a chain (`helper()`, `os.sep`, `t.field`), or a name treesitter cannot find a declaration for | the doc page when there is one, else hover, else `lookup.fallback` |
 | anything unclear (no parser, no tokens, a call treesitter cannot place) | the doc page, else `lookup.fallback` |
 
 Hover is used only when an attached client implements `textDocument/hover`;
-without one everything goes to the docs. A visual selection or an explicit
+without one nothing is classified and everything goes to the docs. A hover
+that comes back empty (every client errored or had nothing) counts as no
+hover. A visual selection or an explicit
 `:DevDocs definition <text>` is never second-guessed.
 
 ## Configuration
@@ -270,8 +276,9 @@ without one everything goes to the docs. A visual selection or an explicit
     -- On :DevDocs definition / example, tell keywords and library names from the project's
     -- own names (LSP semantic tokens, else treesitter): a local variable, parameter or field
     -- shows vim.lsp.buf.hover() instead of a doc page, and a project function the docs do not
-    -- know shows hover before `fallback`. Only when an attached client can hover; a visual
-    -- selection or an explicit argument always looks up the docs.
+    -- know shows hover before `fallback`. Only when an attached client can hover; an empty
+    -- hover goes on to the docs, and a visual selection or an explicit argument always looks
+    -- up the docs.
     smart = true,
   },
 

@@ -4,6 +4,8 @@
 --- none falls back per config.lookup.fallback. With config.lookup.smart a
 --- project variable under the cursor (classify.lua) shows LSP hover instead,
 --- and a project symbol the docs do not know shows hover before the fallback.
+--- An empty hover (every client errored or said nothing) goes on as if there
+--- had been no hover.
 local classify = require "devdocs.classify"
 local config = require "devdocs.config"
 local detect = require "devdocs.detect"
@@ -67,12 +69,52 @@ function M.can_hover(bufnr)
   return #vim.lsp.get_clients { bufnr = bufnr, method = "textDocument/hover" } > 0
 end
 
---- Show LSP hover when a client can; false when none can (caller goes on).
-local function try_hover(bufnr)
+--- Markdown lines of every non-empty hover answer, in client order, separated
+--- by a rule; empty when every client errored or had nothing to say.
+--- @param results table<integer, { err?: table, result?: table }>|nil
+--- @return string[]
+function M.hover_lines(results)
+  local ids = vim.tbl_keys(results or {})
+  table.sort(ids)
+  local lines = {}
+  for _, id in ipairs(ids) do
+    local r = results[id]
+    local contents = not (r.err or r.error) and r.result and r.result.contents
+    if contents then
+      local md = vim.lsp.util.convert_input_to_markdown_lines(contents)
+      if vim.trim(table.concat(md, "\n")) ~= "" then
+        if #lines > 0 then
+          vim.list_extend(lines, { "", "---", "" })
+        end
+        vim.list_extend(lines, md)
+      end
+    end
+  end
+  return lines
+end
+
+--- Ask the clients for hover at the cursor and show it like vim.lsp.buf.hover()
+--- does; `on_empty` runs instead when no client has anything to say. False
+--- when no client can hover (nothing was asked; the caller goes on).
+--- @param bufnr integer
+--- @param on_empty fun()
+--- @return boolean
+local function try_hover(bufnr, on_empty)
   if not M.can_hover(bufnr) then
     return false
   end
-  vim.lsp.buf.hover()
+  local win = vim.api.nvim_get_current_win()
+  local function params(client)
+    return vim.lsp.util.make_position_params(win, client.offset_encoding or "utf-16")
+  end
+  vim.lsp.buf_request_all(bufnr, "textDocument/hover", params, function(results)
+    local lines = M.hover_lines(results)
+    if #lines == 0 then
+      on_empty()
+      return
+    end
+    vim.lsp.util.open_floating_preview(lines, "markdown", { focus_id = "textDocument/hover" })
+  end)
   return true
 end
 
@@ -95,6 +137,42 @@ local function fallback(cands, bufdocs)
   )
 end
 
+--- `then_` unless `class` is "symbol" and hover answers first.
+local function hover_symbol_or(class, bufnr, then_)
+  if not (class == "symbol" and try_hover(bufnr, then_)) then
+    then_()
+  end
+end
+
+--- The doc half of a lookup: rank `cands` over the buffer's docs and open
+--- the hit, the picker, or the fallback.
+local function lookup_docs(mode, bufnr, cands, class)
+  local bufdocs = detect.buffer(bufnr)
+  local order, tiers = detect.lookup_order(bufnr)
+  local sources = index.sources(order, tiers)
+  if #sources == 0 then
+    hover_symbol_or(class, bufnr, function()
+      no_docs(bufdocs)
+    end)
+    return
+  end
+  local hits = rank.lookup(cands, sources, { limit = 25 })
+  if #hits == 0 then
+    hover_symbol_or(class, bufnr, function()
+      fallback(cands, bufdocs)
+    end)
+    return
+  end
+  local function open(hit)
+    viewer.open { slug = hit.slug, path = hit.entry.path, entry = hit.entry, mode = mode }
+  end
+  if rank.decisive(hits) then
+    open(hits[1])
+    return
+  end
+  picker.pick_hits(hits, ("DevDocs: %s"):format(cands[1]), open)
+end
+
 --- @param mode "section"|"examples"|"page"
 --- @param opts { text?: string, bufnr?: integer }|nil
 function M.run(mode, opts)
@@ -107,36 +185,18 @@ function M.run(mode, opts)
     return
   end
   -- An explicit selection or argument is a request for the docs; only the
-  -- cursor's own word is second-guessed.
+  -- cursor's own word is second-guessed, and only when hover is possible
+  -- (without it every class ends at the docs, so classifying is wasted).
   local explicit = text ~= nil and text ~= ""
-  local class = (not explicit and config.get().lookup.smart) and classify.cursor(bufnr) or "unknown"
-  if class == "variable" and try_hover(bufnr) then
+  local smart = not explicit and config.get().lookup.smart and M.can_hover(bufnr)
+  local class = smart and classify.cursor(bufnr) or "unknown"
+  local function docs()
+    lookup_docs(mode, bufnr, cands, class)
+  end
+  if class == "variable" and try_hover(bufnr, docs) then
     return
   end
-  local bufdocs = detect.buffer(bufnr)
-  local order, tiers = detect.lookup_order(bufnr)
-  local sources = index.sources(order, tiers)
-  if #sources == 0 then
-    if not (class == "symbol" and try_hover(bufnr)) then
-      no_docs(bufdocs)
-    end
-    return
-  end
-  local hits = rank.lookup(cands, sources, { limit = 25 })
-  if #hits == 0 then
-    if not (class == "symbol" and try_hover(bufnr)) then
-      fallback(cands, bufdocs)
-    end
-    return
-  end
-  local function open(hit)
-    viewer.open { slug = hit.slug, path = hit.entry.path, entry = hit.entry, mode = mode }
-  end
-  if rank.decisive(hits) then
-    open(hits[1])
-    return
-  end
-  picker.pick_hits(hits, ("DevDocs: %s"):format(cands[1]), open)
+  docs()
 end
 
 --- Open a doc by name and optional entry name: `:DevDocs open python os.path.join`.
