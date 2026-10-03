@@ -203,6 +203,22 @@ describe("viewer p (whole page at the current section)", function()
     viewer.close()
   end)
 
+  it("p puts the heading at the top after <BS> restored a scroll position (e -> p, ? -> p)", function()
+    viewer.open { slug = slug, path = entry.path, entry = entry, mode = "section" }
+    viewer.set_mode "page"
+    viewer.back() -- the section view comes back with the topline it was left at
+    viewer.set_mode "examples"
+    viewer.set_mode "page"
+    eq(20, vim.api.nvim_win_get_cursor(0)[1])
+    eq(20, topline())
+    viewer.back()
+    viewer.help()
+    viewer.set_mode "page"
+    eq(20, vim.api.nvim_win_get_cursor(0)[1])
+    eq(20, topline())
+    viewer.close()
+  end)
+
   it("opens the page at the section from the help screen", function()
     viewer.open { slug = slug, path = entry.path, entry = entry, mode = "section" }
     viewer.help()

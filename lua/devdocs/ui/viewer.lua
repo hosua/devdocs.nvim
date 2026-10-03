@@ -345,7 +345,10 @@ function M.set_mode(mode)
     return
   end
   local from = current.view
-  local v = vim.tbl_extend("force", from, { mode = mode, topline = nil })
+  local v = vim.tbl_extend("force", from, { mode = mode })
+  -- a `nil` in tbl_extend's table is no key at all: clear the scroll
+  -- position a history entry carried, or place_cursor restores it over `zt`
+  v.topline = nil
   if mode ~= "page" then
     -- view.line is a line of the page; remember it for the way back to p
     if from.mode == "page" and current.float:valid() then
