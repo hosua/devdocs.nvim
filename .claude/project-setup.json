@@ -49,6 +49,18 @@
         "date": "2026-10-03",
         "commit": "9873d0cce0536ccd1041d5a0cdfbb3cb0473de8f"
       }
+    },
+    "readme-maintenance": {
+      "status": "enabled",
+      "decided": "2026-10-03",
+      "notes": "guard: readme-drift.yml (warn); first sync fixed C1-C3, left C4 small gaps as-is",
+      "files": [
+        ".github/workflows/readme-drift.yml"
+      ],
+      "last_synced": {
+        "commit": "9873d0cce0536ccd1041d5a0cdfbb3cb0473de8f",
+        "date": "2026-10-03"
+      }
     }
   }
 }

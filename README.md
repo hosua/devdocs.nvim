@@ -70,7 +70,7 @@ One command with subcommands, plus flat aliases for each action.
 | `search [query]` | `:DevDocsSearch` | grep the buffer's docs, then the newest version of every other enabled doc; `@css …` narrows to one doc (any version: `@python~3.9`) |
 | `list` | `:DevDocsList` | the manager |
 | `install [doc]` | `:DevDocsInstall` | docs for the current buffer (right version), or a named doc. `!` reinstalls |
-| `install-all` | `:DevDocsInstallAll` | every doc devdocs offers (asks; `!` skips the question). Already installed docs are skipped |
+| `install-all` | `:DevDocsInstallAll` | every doc devdocs offers (asks; `!` skips the question). Installed docs that are current are skipped; outdated ones are updated |
 | `uninstall <doc>` | `:DevDocsUninstall` | remove a doc (asks; `!` skips) |
 | `prune [lang]` | `:DevDocsPrune` | delete old versions. Per language it keeps (1) the newest installed version that is enabled, or the newest installed one when every installed version is disabled — versions compare across the docs list and the installed `meta.json`, so an install newer than the docs list is kept — and (2) every installed version a project pins in `projects.json` (the version detected for that project resolves to it); it deletes the other installed versions. `lang` limits it to one language. Asks with the full list and names any pinned versions it kept (`!` skips). A language with one installed version is never touched |
 | `update [doc]` | `:DevDocsUpdate` | reinstall one doc, or every installed doc the docs list shows as newer |
@@ -114,8 +114,8 @@ Inside the **viewer**:
 | `?` | help |
 
 Inside the **search picker** (telescope): `<C-t>` toggles grep / entry-name
-mode, `<CR>` opens in the viewer, `<C-x>` / `<C-v>` / `<C-t>ab` open in a
-split / vsplit / tab, `<C-o>` opens the page in the browser, `<C-y>` yanks
+mode, `<CR>` opens in the viewer, `<C-x>` / `<C-v>` open in a split /
+vsplit, `<C-o>` opens the page in the browser, `<C-y>` yanks
 its url. Start the prompt with `@slug ` to search one doc.
 
 Inside the **manager** each language is listed once, under *Installed* (any
@@ -178,13 +178,14 @@ the stale cache is used, nothing is reported). Set
 A lookup searches only the docs of the buffer's language, in the version its
 project uses, so it stays instant with hundreds of docs installed.
 
-1. **Language**, first that matches: `extra_filetypes`, file-name rules
-   (`package.json`, `Dockerfile`, `.npmrc`, …), the filetype, the file
-   extension (`.hh`, `.cppm`, `.tofu`, `.pyi`, … for buffers whose filetype is
+1. **Language**: `extra_filetypes`, file-name rules (`package.json`,
+   `Dockerfile`, `.npmrc`, …) and the filetype, all merged. If none of
+   those match, the first of: the file extension (`.hh`, `.cppm`, `.tofu`, `.pyi`, … for buffers whose filetype is
    empty or unknown), the shebang (`#!/usr/bin/env -S python3.12`), then shell
    dotfiles (`.bashrc`, `.xinitrc`, other `*rc` files) as your `$SHELL`.
-   Nothing matched: the newest version of every installed doc.
-2. **Version**, only for docs with more than one installed version: an
+   Nothing matched: the newest enabled version of every installed doc.
+2. **Version**, only for docs with more than one installed version (and
+   not with `import.recent_only = true`): an
    attached language server (`lua_ls` `Lua.runtime.version`, pyright's
    `python.pythonPath`), a version in the shebang, the project's files
    (`.nvmrc`, `.python-version`, `pyproject.toml`, `go.mod`, `.luarc.json`,
@@ -200,7 +201,8 @@ Answers are cached per buffer for the session and per project in
 The first time a session touches a project those files are checked again, so
 editing `.nvmrc` is noticed on the next start. `:DevDocs resync` forces it now;
 `:DevDocs detect` shows what was decided and why. `lookup.scope = "all"` brings
-back searching every installed doc after the buffer's own.
+back searching every enabled installed version after the buffer's own docs,
+in lookups and `:DevDocs search`.
 
 ## Configuration
 
@@ -347,7 +349,8 @@ not newer than it is used, else the newest. Add your own with
 `:DevDocs install-all` downloads every doc (about 8.7 GB of HTML as of
 2026-09, converted to a similar amount of markdown) with `install.max_jobs`
 parallel jobs and exponential backoff when the CDN answers 429. It is
-resumable: docs already on disk are skipped.
+resumable: installed docs that are current are skipped, outdated ones are
+updated.
 
 To avoid the public CDN entirely, `:DevDocs mirror` clones
 [freeCodeCamp/devdocs](https://github.com/freeCodeCamp/devdocs) into
