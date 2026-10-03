@@ -179,9 +179,6 @@ DevDocs build date used when none is known), Pages, Notes.
               marks the filter hides. y or <CR> applies, n q <Esc>
               cancels. Applied marks clear, failed ones stay. :wq and :x
               apply, then close the list (not when the menu is cancelled).
-  X           with marks: uninstall every marked installed doc (the confirm
-              says how many of them the current view does not show; marks
-              on docs that are not installed are ignored, :w installs them)
   V v ... X d uninstall the installed docs in the visual selection
   D           prune this language (the |:DevDocs| prune keep rule)
   gD          the same for every language (= :DevDocs prune)
@@ -189,6 +186,12 @@ DevDocs build date used when none is known), Pages, Notes.
   Marks survive filter changes; the status line shows "N marked" while any
   exist and the list buffer is 'modified', so :q refuses (E37) until they
   are applied or cleared; q and <Esc> close the list anyway.
+
+  Marked mode: while any mark is pending the hint line shows
+  "S apply 3 marked (2 install, 1 uninstall)  m toggle  M clear ..." and
+  i, X, V ... X d and u do nothing (they would act on one row behind the
+  plan's back); they say "N marked: S applies them (M clears)". D, gD, U
+  and A still work.
 
 ==============================================================================
 6. DATA ON DISK                                                  *devdocs-data*
@@ -217,10 +220,16 @@ than the plugin knows are never overwritten.
   DevDocsHeader Title              DevDocsDim Comment
   DevDocsMatch Search              DevDocsInstalled DiagnosticOk
   DevDocsOutdated DiagnosticWarn   DevDocsError DiagnosticError
-  DevDocsProgress DiagnosticInfo   DevDocsKey Special
+  DevDocsProgress DiagnosticInfo   DevDocsKey @type.builtin
   DevDocsLink Underlined           DevDocsMark DiagnosticHint
   DevDocsCost DiagnosticError      DevDocsFreed DiagnosticOk
 
+Key hints (manager hint line and help, viewer footer and help, apply menu)
+draw keys in DevDocsKey and actions in DevDocsDim. DevDocsKey links to
+@type.builtin: teal in NvChad's starlight theme, cyan in Neovim's default
+scheme (Special is red in starlight). Override it like any group: >lua
+  vim.api.nvim_set_hl(0, "DevDocsKey", { fg = "#21BFC2" })
+<
 ==============================================================================
 8. HEALTH                                                      *devdocs-health*
 

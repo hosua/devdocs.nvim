@@ -203,6 +203,27 @@ function M.count(marked)
   return #M.targets(marked)
 end
 
+--- Keys that act on the row under the cursor and so would bypass the marks
+--- (install it, delete it, update it): while marks are pending they do
+--- nothing and point at S instead, so the marks are the one plan.
+M.MARKED_BLOCKED = { i = true, X = true, u = true }
+
+--- Why `key` does nothing right now: a short notice when marks are pending
+--- and the key is one of MARKED_BLOCKED, else nil (the key may run).
+--- @param marked table<string, boolean>|nil
+--- @param key string
+--- @return string|nil
+function M.marked_guard(marked, key)
+  if not M.MARKED_BLOCKED[key] then
+    return nil
+  end
+  local n = M.count(marked)
+  if n == 0 then
+    return nil
+  end
+  return ("%d marked: S applies them (M clears)"):format(n)
+end
+
 --- Drop marks for slugs that are neither installed nor in the docs list
 --- (a mark on a doc that is not installed means "install it", so those
 --- stay). Without a docs list (not loaded yet) every mark stays.

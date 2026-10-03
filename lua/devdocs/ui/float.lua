@@ -4,8 +4,22 @@
 --- Highlight groups are `default = true` links, re-applied on every open
 --- because NvChad's base46 switches themes without a ColorScheme autocmd.
 local config = require "devdocs.config"
+local hints = require "devdocs.ui.hints"
 
 local M = {}
+
+M.NS = vim.api.nvim_create_namespace "devdocs_float"
+
+--- Highlight `spans` ({ row (1-based), col_start, col_end (byte columns),
+--- hl }) in a buffer, in namespace `ns`.
+--- @param buf integer
+--- @param ns integer
+--- @param spans table[]
+function M.highlight(buf, ns, spans)
+  for _, s in ipairs(spans) do
+    pcall(vim.api.nvim_buf_set_extmark, buf, ns, s.row - 1, s.col_start, { end_col = s.col_end, hl_group = s.hl })
+  end
+end
 
 M.HIGHLIGHTS = {
   DevDocsNormal = "NormalFloat",
@@ -19,7 +33,10 @@ M.HIGHLIGHTS = {
   DevDocsOutdated = "DiagnosticWarn",
   DevDocsError = "DiagnosticError",
   DevDocsProgress = "DiagnosticInfo",
-  DevDocsKey = "Special",
+  -- keys in hint lines / footers / help (actions use DevDocsDim): teal in
+  -- NvChad's starlight (#13C299), cyan in Neovim's default scheme (#8cf8f7);
+  -- Special, the old link, is red in starlight
+  DevDocsKey = "@type.builtin",
   DevDocsLink = "Underlined",
   DevDocsMark = "DiagnosticHint",
   DevDocsCost = "DiagnosticError",
@@ -74,7 +91,8 @@ end
 --- @class DevDocsFloatOpts
 --- @field lines string[]
 --- @field title string|nil
---- @field footer string|nil
+--- @field footer string|DevDocsHint[]|nil plain text, or key hints (keys in DevDocsKey)
+--- @field spans table[]|nil highlights { row, col_start, col_end, hl } for `lines`
 --- @field filetype string|nil
 --- @field width number|nil
 --- @field height number|nil
@@ -89,7 +107,7 @@ end
 --- @field buf integer
 --- @field win integer
 --- @field set_lines fun(self: DevDocsFloat, lines: string[])
---- @field set_title fun(self: DevDocsFloat, title: string|nil, footer: string|nil)
+--- @field set_title fun(self: DevDocsFloat, title: string|nil, footer: string|DevDocsHint[]|nil)
 --- @field close fun(self: DevDocsFloat)
 --- @field valid fun(self: DevDocsFloat): boolean
 
@@ -125,7 +143,10 @@ function M.open(opts)
       wc.title = " " .. M.fit(self.title, l.width - 4) .. " "
       wc.title_pos = "center"
     end
-    if self.footer and self.footer ~= "" then
+    if type(self.footer) == "table" and #self.footer > 0 then
+      wc.footer = hints.chunks(self.footer, l.width - 2)
+      wc.footer_pos = "center"
+    elseif type(self.footer) == "string" and self.footer ~= "" then
       wc.footer = " " .. M.fit(self.footer, l.width - 4) .. " "
       wc.footer_pos = "center"
     end
@@ -193,6 +214,9 @@ function M.open(opts)
   end
 
   self:set_lines(opts.lines or {})
+  if opts.spans then
+    M.highlight(buf, M.NS, opts.spans)
+  end
   if opts.filetype then
     vim.bo[buf].filetype = opts.filetype
     pcall(vim.treesitter.start, buf, opts.filetype)
@@ -254,12 +278,7 @@ function M.choose(opts)
     conceal = false,
   }
   vim.wo[f.win].cursorline = false
-  for _, s in ipairs(opts.spans or {}) do
-    pcall(vim.api.nvim_buf_set_extmark, f.buf, CHOOSE_NS, s.row - 1, s.col_start, {
-      end_col = s.col_end,
-      hl_group = s.hl,
-    })
-  end
+  M.highlight(f.buf, CHOOSE_NS, opts.spans or {})
   local yes = { y = true, Y = true, ["\r"] = true, ["\n"] = true }
   local no = { n = true, N = true, q = true, ["\27"] = true, ["\3"] = true }
   local scroll = {

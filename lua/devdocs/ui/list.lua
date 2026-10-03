@@ -4,6 +4,7 @@
 --- ui/render.lua; everything about rows from ui/model.lua.
 local config = require "devdocs.config"
 local float = require "devdocs.ui.float"
+local hints = require "devdocs.ui.hints"
 local installer = require "devdocs.installer"
 local manifest = require "devdocs.manifest"
 local model = require "devdocs.ui.model"
@@ -243,32 +244,10 @@ local function cursor_row()
   return ui and model.rows(ui.state)[ui.state.cursor] or nil
 end
 
---- X: the marked installed docs when there are marks (the confirm says how
---- many of them the current view hides, and how many marks it ignores
---- because they are installs), else the row under the cursor: a version,
---- or a language's installed versions that the filter shows.
+--- X: the row under the cursor: a version, or a language's installed
+--- versions that the filter shows. With marks pending X is blocked
+--- (guarded); S / :w applies the marks instead.
 local function do_uninstall_selection()
-  local marked = selection.targets(ui.state.marked)
-  if #marked > 0 then
-    local installed = vim.tbl_filter(function(s)
-      return ui.state.installed[s] ~= nil
-    end, marked)
-    local skipped = #marked - #installed
-    if #installed == 0 then
-      notify(("no marked doc is installed (%d marked to install); use :w or S to apply installs"):format(skipped))
-      return
-    end
-    local notes = {}
-    notes[#notes + 1] = hidden_note(installed)
-    if skipped > 0 then
-      notes[#notes + 1] = ("%d marked doc%s not installed, ignored here; use :w or S to apply installs"):format(
-        skipped,
-        skipped == 1 and " is" or "s are"
-      )
-    end
-    do_uninstall_many(installed, notes)
-    return
-  end
   local row = current_row()
   if not row then
     return
@@ -279,6 +258,22 @@ local function do_uninstall_selection()
     return
   end
   do_uninstall_many(slugs)
+end
+
+--- `fn`, unless marks are pending and `key` is one selection.marked_guard
+--- blocks (i, X, u): then a short notice that S applies the marks.
+--- @param key string
+--- @param fn fun()
+--- @return fun()
+local function guarded(key, fn)
+  return function()
+    local why = ui and selection.marked_guard(ui.state.marked, key)
+    if why then
+      notify(why)
+      return
+    end
+    fn()
+  end
 end
 
 --- Prune one base or all: keep the newest enabled installed version and
@@ -488,8 +483,9 @@ end
 local function do_help()
   local h = float.open {
     lines = render.HELP,
+    spans = hints.help_spans(render.HELP),
     title = "DevDocs manager help",
-    footer = "q close",
+    footer = { { "q", "close" } },
     width = 70,
     height = #render.HELP + 2,
     mode = "float",
@@ -619,10 +615,13 @@ function M.open()
     h = function()
       dispatch { type = "collapse" }
     end,
-    i = with_target(function(row)
-      do_install(row, row.meta ~= nil)
-    end),
-    X = do_uninstall_selection,
+    i = guarded(
+      "i",
+      with_target(function(row)
+        do_install(row, row.meta ~= nil)
+      end)
+    ),
+    X = guarded("X", do_uninstall_selection),
     m = function()
       dispatch { type = "mark" }
     end,
@@ -641,7 +640,7 @@ function M.open()
     gD = function()
       do_prune(nil)
     end,
-    u = with_row(do_update),
+    u = guarded("u", with_row(do_update)),
     U = do_update_all,
     e = with_target(do_toggle_enabled),
     ["<CR>"] = with_target(do_open),
@@ -720,6 +719,11 @@ function M.open()
   end)
   local function delete_range()
     local from, to = visual_rows()
+    local why = selection.marked_guard(ui.state.marked, "X")
+    if why then
+      notify(why)
+      return
+    end
     if from then
       do_uninstall_many(selection.range_targets(model.rows(ui.state), from, to))
     end

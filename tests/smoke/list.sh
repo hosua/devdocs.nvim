@@ -40,6 +40,12 @@ smoke_keys 'gg' '}' 'm'
 sleep 0.3
 smoke_expect '1 marked'
 smoke_expect '^.{0,20}│● · '                 # the mark glyph on a row that is not installed
+smoke_expect 'S apply 1 marked \(1 install\)  m toggle  M clear'   # marked-mode hint line
+smoke_reject ' i install'
+smoke_keys 'i'                      # blocked while marks are pending: nothing installs
+sleep 0.3
+smoke_expect '1 marked: S applies them \(M clears\)'
+smoke_reject '↓ '
 smoke_keys ':w' Enter               # the apply menu (S does the same)
 sleep 0.6
 smoke_expect 'Apply changes'
@@ -52,6 +58,7 @@ smoke_reject 'Apply changes'
 smoke_expect '1 marked'
 smoke_keys 'M'
 smoke_reject '[0-9]+ marked'
+smoke_expect ' i install  X delete  m mark'   # normal hints are back
 smoke_keys '?'
 sleep 0.4
 smoke_expect 'DevDocs manager keys'

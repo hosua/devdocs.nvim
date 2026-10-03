@@ -21,7 +21,18 @@ local M = {}
 --- @field line integer|nil       line of the page to put the cursor on
 --- @field view_mode "float"|"split"|"vsplit"|"tab"|nil  window kind override
 
-M.FOOTER = "o browser  y url  ⏎ follow  ⌫ back  e examples  p page  s search  ? help  q close"
+local hints = require "devdocs.ui.hints"
+M.FOOTER = {
+  { "o", "browser" },
+  { "y", "url" },
+  { "⏎", "follow" },
+  { "⌫", "back" },
+  { "e", "examples" },
+  { "p", "page" },
+  { "s", "search" },
+  { "?", "help" },
+  { "q", "close" },
+}
 
 M.HELP = {
   "DevDocs viewer keys",
@@ -357,7 +368,8 @@ function M.help()
   current.links = {}
   current.float:set_lines(M.HELP)
   apply_links(current.float.buf, {})
-  current.float:set_title("DevDocs help", "⌫ back  q close")
+  float.highlight(current.float.buf, NS, hints.help_spans(M.HELP))
+  current.float:set_title("DevDocs help", { { "⌫", "back" }, { "q", "close" } })
 end
 
 return M

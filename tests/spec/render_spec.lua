@@ -300,9 +300,68 @@ describe("list render: marks on docs that are not installed", function()
     ok(vim.startswith(py, "◐ "), py)
   end)
 
-  it("the hint line names the apply keys", function()
-    ok(render.render(state(140, 20)).lines[2]:find("S/:w apply", 1, true), render.render(state(140, 20)).lines[2])
+  it("the help names the apply keys", function()
     ok(table.concat(render.HELP, "\n"):find(":w", 1, true))
+  end)
+end)
+
+describe("render.hints (key hint line)", function()
+  local function keys(list)
+    return vim.tbl_map(function(h)
+      return h[1]
+    end, list)
+  end
+
+  local function span_texts(line, spans, hl)
+    local out = {}
+    for _, s in ipairs(spans) do
+      if s.row == 2 and s.hl == hl then
+        out[#out + 1] = line:sub(s.col_start + 1, s.col_end)
+      end
+    end
+    return out
+  end
+
+  it("without marks: the row actions, no apply", function()
+    local h = render.hints(state(140, 20))
+    local k = keys(h)
+    ok(vim.tbl_contains(k, "i") and vim.tbl_contains(k, "X") and vim.tbl_contains(k, "m"), vim.inspect(k))
+    ok(not vim.tbl_contains(k, "S"), vim.inspect(k))
+  end)
+
+  it("with marks: S applies N marked (installs, uninstalls), no i / X / u", function()
+    -- css is installed (uninstall), python~3.9 and angular are not (install)
+    local s = state(140, 20, { marked = { css = true, ["python~3.9"] = true, angular = true } })
+    local h = render.hints(s)
+    eq({ "S", "apply 3 marked (2 install, 1 uninstall)" }, h[1])
+    local k = keys(h)
+    for _, blocked in ipairs { "i", "X", "u" } do
+      ok(not vim.tbl_contains(k, blocked), vim.inspect(k))
+    end
+    for _, want in ipairs { "m", "M", "⏎", "/", "?", "q" } do
+      ok(vim.tbl_contains(k, want), want .. " missing: " .. vim.inspect(k))
+    end
+  end)
+
+  it("names only the non-empty halves of the plan", function()
+    eq({ "S", "apply 1 marked (1 uninstall)" }, render.hints(state(140, 20, { marked = { css = true } }))[1])
+    eq(
+      { "S", "apply 1 marked (1 install)" },
+      render.hints(state(140, 20, { marked = { rust = false, angular = true } }))[1]
+    )
+  end)
+
+  it("line 2 shows the hints with keys in DevDocsKey and actions in DevDocsDim", function()
+    local r = render.render(state(140, 20))
+    ok(r.lines[2]:find(" i install  X delete", 1, true), r.lines[2])
+    local ks = span_texts(r.lines[2], r.spans, "DevDocsKey")
+    ok(vim.tbl_contains(ks, "i") and vim.tbl_contains(ks, "?"), vim.inspect(ks))
+    ok(vim.tbl_contains(span_texts(r.lines[2], r.spans, "DevDocsDim"), " install  "))
+    local m = render.render(state(140, 20, { marked = { css = true, angular = true } }))
+    ok(m.lines[2]:find "^ S apply 2 marked %(1 install, 1 uninstall%)  m toggle  M clear", m.lines[2])
+    ok(not m.lines[2]:find(" i install", 1, true), m.lines[2])
+    ok(not m.lines[2]:find(" X delete", 1, true), m.lines[2])
+    eq("S", span_texts(m.lines[2], m.spans, "DevDocsKey")[1])
   end)
 end)
 
@@ -353,6 +412,7 @@ describe("render.plan_lines", function()
     ok(p > uh and pl:find("45.6 MB", 1, true), pl)
     ok(lines[#lines]:find("y/⏎ apply   n/q/Esc cancel", 1, true), lines[#lines])
     ok(#span_text(lines, spans, "DevDocsHeader") == 2)
+    eq({ "y/⏎", "n/q/Esc" }, span_text(lines, spans, "DevDocsKey"))
   end)
 
   it("omits an empty group and shows ? for an unknown size", function()
@@ -384,5 +444,11 @@ describe("plan menu highlight groups", function()
     local hl = require("devdocs.ui.float").HIGHLIGHTS
     eq("DiagnosticError", hl.DevDocsCost)
     eq("DiagnosticOk", hl.DevDocsFreed)
+  end)
+
+  it("links DevDocsKey to a teal/cyan group distinct from the gray actions and the marks", function()
+    local hl = require("devdocs.ui.float").HIGHLIGHTS
+    eq("@type.builtin", hl.DevDocsKey)
+    ok(hl.DevDocsKey ~= hl.DevDocsDim and hl.DevDocsKey ~= hl.DevDocsMark)
   end)
 end)

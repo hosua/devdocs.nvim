@@ -440,3 +440,26 @@ describe("selection.plan", function()
     eq({ css = true }, marked)
   end)
 end)
+
+describe("selection.marked_guard (i / X / u while marks are pending)", function()
+  it("lets every key through without marks", function()
+    for _, key in ipairs { "i", "X", "u", "m", "S" } do
+      eq(nil, selection.marked_guard({}, key))
+      eq(nil, selection.marked_guard(nil, key))
+      eq(nil, selection.marked_guard({ css = false }, key))
+    end
+  end)
+
+  it("blocks i, X and u with marks and says how to apply or clear them", function()
+    local marked = { css = true, ["python~3.9"] = true, rust = true }
+    for _, key in ipairs { "i", "X", "u" } do
+      eq("3 marked: S applies them (M clears)", selection.marked_guard(marked, key))
+    end
+  end)
+
+  it("leaves the mark, apply, navigation and bulk keys alone with marks", function()
+    for _, key in ipairs { "m", "M", "S", "<CR>", "/", "?", "D", "U", "e" } do
+      eq(nil, selection.marked_guard({ css = true }, key))
+    end
+  end)
+end)

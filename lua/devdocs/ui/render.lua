@@ -2,6 +2,8 @@
 --- Header lines are fixed; only the visible window of rows is emitted so a
 --- list of 800 docs scrolls without moving the header. Byte columns
 --- throughout, which is what extmarks and getmousepos() use.
+local hints = require "devdocs.ui.hints"
+local manifest = require "devdocs.manifest"
 local model = require "devdocs.ui.model"
 local selection = require "devdocs.ui.selection"
 
@@ -303,6 +305,52 @@ local function render_row(state, rows, i, cols, line_no, spans)
   return line
 end
 
+M.HINTS = {
+  { "i", "install" },
+  { "X", "delete" },
+  { "m", "mark" },
+  { "D", "prune" },
+  { "u", "update" },
+  { "e", "enable" },
+  { "⏎", "open" },
+  { "Tab", "versions" },
+  { "/", "filter" },
+  { "?", "help" },
+}
+
+--- Key hints of line 2 ({ key, action } pairs, ui/hints). Without marks the
+--- row actions; with marks the marked mode: S first, naming what it would
+--- do ("apply 3 marked (2 install, 1 uninstall)", selection.plan), then the
+--- mark keys, and no i / X / u (selection.marked_guard blocks them).
+--- @param state DevDocsListState
+--- @return DevDocsHint[]
+function M.hints(state)
+  local n = selection.count(state.marked)
+  if n == 0 then
+    return M.HINTS
+  end
+  local plan = selection.plan(state.marked, state.installed, manifest.by_slug(state.docs or {}))
+  local what = {}
+  if #plan.install > 0 then
+    what[#what + 1] = ("%d install"):format(#plan.install)
+  end
+  if #plan.uninstall > 0 then
+    what[#what + 1] = ("%d uninstall"):format(#plan.uninstall)
+  end
+  if #plan.unknown > 0 then
+    what[#what + 1] = ("%d unknown"):format(#plan.unknown)
+  end
+  return {
+    { "S", ("apply %d marked (%s)"):format(n, table.concat(what, ", ")) },
+    { "m", "toggle" },
+    { "M", "clear" },
+    { "⏎", "open" },
+    { "/", "filter" },
+    { "?", "help" },
+    { "q", "close" },
+  }
+end
+
 --- @param state DevDocsListState
 --- @return { lines: string[], spans: table[], regions: table[], rows: DevDocsListRow[] }
 function M.render(state)
@@ -345,11 +393,11 @@ function M.render(state)
   if marks_at then
     spans[#spans + 1] = { row = 1, col_start = marks_at, col_end = #left, hl = "DevDocsMark" }
   end
-  lines[2] = M.cell(
-    " i install  X delete  m/M mark/clear  S/:w apply  D prune  u update  e enable  ⏎ open  Tab versions  / filter  ? help",
-    width
-  )
-  spans[#spans + 1] = { row = 2, col_start = 0, col_end = #lines[2], hl = "DevDocsDim" }
+  local hint_line, hint_spans = hints.line(M.hints(state), { prefix = " ", width = width })
+  lines[2] = hint_line .. string.rep(" ", math.max(0, width - vim.fn.strdisplaywidth(hint_line)))
+  for _, sp in ipairs(hint_spans) do
+    spans[#spans + 1] = { row = 2, col_start = sp.col_start, col_end = sp.col_end, hl = sp.hl }
+  end
   local cols = M.columns(width)
   lines[3] = table.concat(cells(cols, "", "", "Name", "Version", "Size", "Released", "Pages", "Notes"))
   spans[#spans + 1] = { row = 3, col_start = 0, col_end = #lines[3], hl = "DevDocsHeader" }
@@ -422,7 +470,7 @@ end
 
 -- ---------------------------------------------------------------- plan menu
 
-M.PLAN_FOOTER = " y/⏎ apply   n/q/Esc cancel"
+M.PLAN_HINTS = { { "y/⏎", "apply" }, { "n/q/Esc", "cancel" } }
 
 local function signed(sign, bytes)
   local s = M.size(bytes)
@@ -510,8 +558,11 @@ function M.plan_lines(plan, sizes, width, notes)
     end
   end
   lines[#lines + 1] = ""
-  lines[#lines + 1] = M.PLAN_FOOTER
-  spans[#spans + 1] = { row = #lines, col_start = 0, col_end = #M.PLAN_FOOTER, hl = "DevDocsDim" }
+  local footer, footer_spans = hints.line(M.PLAN_HINTS, { prefix = " ", sep = "   " })
+  lines[#lines + 1] = footer
+  for _, sp in ipairs(footer_spans) do
+    spans[#spans + 1] = { row = #lines, col_start = sp.col_start, col_end = sp.col_end, hl = sp.hl }
+  end
   return lines, spans
 end
 
@@ -533,6 +584,7 @@ M.HELP = {
   "  /            filter (type, <Esc> clears, <CR> keeps);  s toggles name/size sort",
   "  r            refresh the docs list from devdocs.io",
   "  A            install every doc (asks first)",
+  "  V … X/d      delete the installed docs in a visual selection (asks first)",
   "",
   "  m            mark / unmark the doc, installed or not (a language: its",
   "               shown installed versions, else its newest version)",
@@ -541,10 +593,10 @@ M.HELP = {
   "  S, :w        apply the marks: install the marked docs that are not",
   "               installed, uninstall the installed ones (a menu lists both",
   "               with the disk used / freed; y or ⏎ applies, n/q/Esc cancels)",
-  "  X            with marks: delete every marked installed doc (asks first,",
-  "               lists them and says how many the filter hides; marks",
-  "               outlive filters; marks on docs not installed are ignored)",
-  "  V … X, V … d delete the installed docs in a visual selection (asks first)",
+  "               marks outlive filters; the menu says how many it hides",
+  "",
+  "  While marks are pending i, X, V … X/d and u do nothing (they would",
+  "  bypass the marks); the hint line shows S apply N marked instead.",
   "  D            prune this language: keep its newest enabled installed",
   "               version and any version a project pins, delete the rest",
   "  gD           the same for every language (:DevDocs prune)",
