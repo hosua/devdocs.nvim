@@ -365,6 +365,8 @@ local function draw_index(self)
   end
   self.rows = rows
   self.links = {}
+  -- redrawn on every filter key: keep tens of thousands of old lines out of undo
+  vim.bo[f.buf].undolevels = -1
   f:set_lines(lines)
   apply_links(f.buf, {})
   float.highlight(f.buf, NS, spans)
@@ -937,7 +939,7 @@ function M.index_filter()
   apply()
   while current == c and c.float:valid() do
     local ok, ch = pcall(vim.fn.getcharstr)
-    if not ok or ch == "\27" then
+    if not ok or ch == "\27" or ch == "\3" then
       text = ""
       break
     elseif ch == "\r" or ch == "\n" then
@@ -947,7 +949,10 @@ function M.index_filter()
     elseif #ch == 1 and ch:match "[%w%p ]" or (ch:byte(1) or 0) >= 0xC2 then
       text = text .. ch
     end
-    apply()
+    -- typed ahead: filter once for the whole burst, not per key
+    if vim.fn.getchar(1) == 0 then
+      apply()
+    end
   end
   vim.api.nvim_echo({ { "" } }, false, {})
   if current == c and c.float:valid() then

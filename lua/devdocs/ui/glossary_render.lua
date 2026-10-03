@@ -29,7 +29,7 @@ M.HELP = {
     header = { "Key", "Action" },
     rows = {
       { "Enter (<CR>)", "open the entry; on a type, expand / collapse it" },
-      { "l / h", "expand / collapse (h on an entry folds its type)" },
+      { "l / h", "expand / collapse; l on an entry opens it, h folds its type" },
       { "Tab", "expand / collapse" },
       { "zR / zM", "expand / collapse every type" },
       { "} / {", "next / previous type" },
@@ -114,7 +114,7 @@ function M.render(tree, rows, opts)
     elseif row.kind == "group" then
       local count = needle ~= "" and ("%d/%d"):format(row.count, row.total) or tostring(row.count)
       local left = "  " .. (row.expanded and render.CHEVRON.open or render.CHEVRON.closed)
-      local name = fit(tree.groups[row.group].name, width - #left - #count - 1)
+      local name = fit(tree.groups[row.group].name, width - vim.fn.strdisplaywidth(left) - #count - 1)
       lines[i] = split_line(left .. name, count, width)
       spans[#spans + 1] = { row = i, col_start = #lines[i] - #count, col_end = #lines[i], hl = "DevDocsDim" }
     else
