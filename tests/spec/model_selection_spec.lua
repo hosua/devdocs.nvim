@@ -14,13 +14,26 @@ local DOCS = {
   doc("rust", "", "Rust"),
 }
 
+-- a version row, or the language row of a single-version language
 local function index_of(state, slug)
   for i, r in ipairs(model.rows(state)) do
     if r.kind == "doc" and r.slug == slug then
       return i
     end
+    if r.kind == "lang" and #r.children == 1 and r.children[1].slug == slug then
+      return i
+    end
   end
   error("no row for " .. slug)
+end
+
+local function lang_index(state, base)
+  for i, r in ipairs(model.rows(state)) do
+    if r.kind == "lang" and r.base == base then
+      return i
+    end
+  end
+  error("no language row for " .. base)
 end
 
 local function fresh()
@@ -41,6 +54,16 @@ describe("list model selection", function()
     eq({ css = true }, s.marked)
     ok(s.cursor > i, "cursor did not advance")
     s = model.reduce(s, { type = "goto", row = i })
+    s = model.reduce(s, { type = "mark" })
+    eq({}, s.marked)
+  end)
+
+  it("mark on a language row marks every installed version, again unmarks them", function()
+    local s = fresh()
+    s = model.reduce(s, { type = "goto", row = lang_index(s, "python") })
+    s = model.reduce(s, { type = "mark" })
+    eq({ ["python~3.12"] = true, ["python~3.9"] = true }, s.marked)
+    s = model.reduce(s, { type = "goto", row = lang_index(s, "python") })
     s = model.reduce(s, { type = "mark" })
     eq({}, s.marked)
   end)
