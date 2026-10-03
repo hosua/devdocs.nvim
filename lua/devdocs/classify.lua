@@ -327,6 +327,40 @@ function M.syntax_code_in_string(name)
   return false
 end
 
+--- Whether 0-based byte `col` of `line` sits inside a `{...}` field of a
+--- Python f-string. Older python.vim syntax files (Neovim 0.11's) have no
+--- group for the field, so :syntax calls all of f"a {name}" a string.
+--- @param line string
+--- @param col integer 0-based byte
+--- @return boolean
+function M.fstring_field(line, col)
+  local open
+  for i = col + 1, 1, -1 do
+    local ch = line:sub(i, i)
+    if ch == "}" and i ~= col + 1 then
+      return false
+    elseif ch == "{" then
+      if line:sub(i - 1, i - 1) == "{" then
+        return false -- {{ is a literal brace
+      end
+      open = i
+      break
+    elseif ch == '"' or ch == "'" then
+      return false
+    end
+  end
+  if not open or not line:find("}", col + 1, true) then
+    return false
+  end
+  local before = line:sub(1, open - 1)
+  local quote = before:match ".*()[\"']"
+  if not quote then
+    return false
+  end
+  local prefix = before:sub(1, quote - 1):match "(%a*)$" or ""
+  return prefix:lower():find("f", 1, true) ~= nil
+end
+
 --- What a position that is not on an identifier holds.
 --- @param line string
 --- @param col integer 0-based byte
@@ -847,6 +881,9 @@ function M.target_at(bufnr, row, col)
     end
     if bufnr == vim.api.nvim_get_current_buf() then
       kind = syntax_kind(row, col)
+      if kind == "string" and vim.bo[bufnr].filetype == "python" and M.fstring_field(line, col) then
+        kind = nil
+      end
       if kind then
         return { class = "trivial", kind = kind, word = kind == "comment" and "" or syntax_run(line, row, col, kind) }
       end

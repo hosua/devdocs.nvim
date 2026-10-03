@@ -389,6 +389,19 @@ describe("classify.from_captures", function()
   end)
 end)
 
+describe("classify.fstring_field", function()
+  it("is true only inside a {field} of an f-string", function()
+    local line = 'w = f"a {name} b"'
+    eq(true, classify.fstring_field(line, line:find("name", 1, true) - 1))
+    eq(false, classify.fstring_field(line, line:find("a {", 1, true) - 1))
+    eq(false, classify.fstring_field(line, line:find(" b", 1, true)))
+    eq(false, classify.fstring_field('w = "a {name} b"', 8)) -- no f prefix
+    eq(true, classify.fstring_field('w = rf"a {name}"', 10))
+    eq(false, classify.fstring_field('w = f"a {{name}}"', 10)) -- {{ is a literal brace
+    eq(false, classify.fstring_field("", 0))
+  end)
+end)
+
 describe("classify.word_at", function()
   it("finds the identifier under the cursor", function()
     eq({ 6, 10 }, { classify.word_at("local count = 1", 7) })
