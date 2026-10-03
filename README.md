@@ -644,6 +644,7 @@ docs, the docs list age, the release dates cache and the install source.
 
 | Version | Highlights |
 |---|---|
+| [0.4.0](https://github.com/hosua/devdocs.nvim/releases/tag/v0.4.0) | Doc index (`:DevDocs open`, `I` in the viewer): types and entries like devdocs.io's sidebar, with a live filter; `:DevDocs open` with no file opens the manager, whose `<CR>` opens a doc's index (`<BS>` returns) |
 | [0.3.0](https://github.com/hosua/devdocs.nvim/releases/tag/v0.3.0) | LSP hover for your own names and a "nothing to document" popup for literals and locals; paginated viewer (`p`), `n`/`N`/`c`/`C` section and chapter jumps; help screens as aligned Key/Action tables |
 | [0.2.0](https://github.com/hosua/devdocs.nvim/releases/tag/v0.2.0) | `:DevDocs list` grouped by language with bulk delete/prune; faster scoped lookups; `p` opens at the current section |
 | [0.1.0](https://github.com/hosua/devdocs.nvim/releases/tag/v0.1.0) | First release: installer, converter, viewer, search picker, list manager, mirror, checkhealth |
