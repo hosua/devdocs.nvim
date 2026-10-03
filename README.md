@@ -179,10 +179,15 @@ classified: on whitespace or punctuation the lookup is a plain doc lookup.
 
 | under the cursor | what happens |
 |---|---|
-| keyword, builtin, library name (`return`, `int`, `print`, `printf`) | the doc page, as always |
+| keyword or builtin (`return`, `int`, `print`, `printf`) | the doc page, as always |
 | a local variable, parameter or field the project declared (`count` in `local count = 1`) | LSP hover, no doc lookup (the docs when the hover is empty) |
-| a project function or type, a variable in a chain (`helper()`, `os.sep`, `t.field`), or a name treesitter cannot find a declaration for | the doc page when there is one, else hover, else `lookup.fallback` |
-| anything unclear (no parser, no tokens, a call treesitter cannot place) | the doc page, else `lookup.fallback` |
+| anything else: a library name, a project function or type, a variable in a chain (`string.format`, `helper()`, `t.field`, `vim.api.nvim_create_user_command`), or a name nothing could place | the doc page when the docs have an entry named exactly that (`string.format()`, `print()`), else hover (the matches the docs did find, or `lookup.fallback`, when the hover is empty) |
+
+"Exactly that" means the qualified name, or the word itself when it is not
+qualified: `vim.print` does not open lua's `print()`, and `vim.fn.insert`
+does not offer `table.insert()`. `defaultLibrary` is no proof the docs have a
+name either: lua_ls gives it to Neovim's `vim.*` API, which no devdocs doc
+covers.
 
 Hover is used only when an attached client implements `textDocument/hover`;
 without one nothing is classified and everything goes to the docs. A hover
@@ -273,12 +278,12 @@ hover. A visual selection or an explicit
     -- its project uses); otherwise in the newest version of every doc.
     -- "all": the buffer's docs first, then every installed doc (slow with many docs installed).
     scope = "buffer",
-    -- On :DevDocs definition / example, tell keywords and library names from the project's
-    -- own names (LSP semantic tokens, else treesitter): a local variable, parameter or field
-    -- shows vim.lsp.buf.hover() instead of a doc page, and a project function the docs do not
-    -- know shows hover before `fallback`. Only when an attached client can hover; an empty
-    -- hover goes on to the docs, and a visual selection or an explicit argument always looks
-    -- up the docs.
+    -- On :DevDocs definition / example, tell keywords and builtins from the project's own
+    -- names (LSP semantic tokens, else treesitter): a local variable, parameter or field shows
+    -- vim.lsp.buf.hover() instead of a doc page, and any other name the docs have no entry
+    -- named exactly like (`vim.api.nvim_create_user_command`) shows hover before fuzzy matches
+    -- or `fallback`. Only when an attached client can hover; an empty hover goes on to the
+    -- docs, and a visual selection or an explicit argument always looks up the docs.
     smart = true,
   },
 

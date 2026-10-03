@@ -106,10 +106,14 @@ require("devdocs").setup({opts})
                       variable, parameter or field of the project (from LSP
                       semantic tokens, else treesitter highlight captures)
                       shows |vim.lsp.buf.hover()| instead of a doc page, and
-                      a project function the docs lack shows hover before
-                      lookup.fallback. Keywords, builtins and library names
-                      (semantic token modifier defaultLibrary) still open
-                      the docs. Needs a client that implements
+                      any other name without a doc entry named exactly like
+                      it (the qualified name, or the bare word when it is
+                      not qualified) shows hover before fuzzy matches or
+                      lookup.fallback: `vim.api.nvim_create_user_command`
+                      hovers, `vim.print` does not open lua's print().
+                      Keywords and builtins still open the docs; library
+                      names (defaultLibrary, which lua_ls also gives vim.*)
+                      open them when the entry exists. Needs a client that implements
                       textDocument/hover; a visual selection or an explicit
                       text argument always opens the docs. From treesitter
                       alone a name is a variable only when the locals query

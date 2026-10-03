@@ -17,9 +17,10 @@ local HOVER = { [1] = { result = { contents = { kind = "markdown", value = "coun
 --- Run fn with lookup's collaborators stubbed; returns what was called.
 --- `hover_results` is what the hover request answers (default HOVER); `calls.hover`
 --- counts hover requests and `calls.float` the hover windows shown.
---- @param o { class?: string, hover?: boolean, hover_results?: table, hits?: table[], sources?: integer, smart?: boolean, fallback?: string }
+--- `cands` is what symbols.candidates returns for the cursor (default { "count" }).
+--- @param o { class?: string, cands?: string[], hover?: boolean, hover_results?: table, hits?: table[], sources?: integer, smart?: boolean, fallback?: string, decisive?: boolean }
 local function scenario(o, fn)
-  local calls = { classify = 0, hover = 0, float = {}, docs = 0, open = 0, search = {}, notify = {} }
+  local calls = { classify = 0, hover = 0, float = {}, docs = 0, open = 0, pick = 0, search = {}, notify = {} }
   local saved = {
     cursor = classify.cursor,
     candidates = symbols.candidates,
@@ -44,7 +45,10 @@ local function scenario(o, fn)
   end
   symbols.candidates = function(_, opts)
     local t = opts and opts.text
-    return { (t and t ~= "") and t or "count" }
+    if t and t ~= "" then
+      return { t }
+    end
+    return o.cands or { "count" }
   end
   detect.buffer = function()
     return { ft = "lua", bases = { "lua" }, missing = {}, slugs = { "lua~5.4" }, root = "/p" }
@@ -60,12 +64,14 @@ local function scenario(o, fn)
     return o.hits or {}
   end
   rank.decisive = function()
-    return true
+    return o.decisive ~= false
   end
   viewer.open = function()
     calls.open = calls.open + 1
   end
-  picker.pick_hits = function() end
+  picker.pick_hits = function()
+    calls.pick = calls.pick + 1
+  end
   vim.lsp.get_clients = function(filter)
     if not o.hover then
       return {}
@@ -268,8 +274,8 @@ describe("lookup.run smart fallback", function()
     eq({ "@lua~5.4 count" }, c.search)
   end)
 
-  it("leaves an unknown token to the configured fallback", function()
-    local c = scenario({ class = "unknown", hover = true, hits = {} }, function()
+  it("uses the configured fallback for an unknown token when no client can hover", function()
+    local c = scenario({ class = "unknown", hover = false, hits = {} }, function()
       lookup.run "section"
     end)
     eq(0, c.hover)
@@ -300,6 +306,126 @@ describe("lookup.run smart fallback", function()
     eq(0, c.classify)
     eq(0, c.hover)
     eq(1, c.open)
+  end)
+end)
+
+-- What lua_ls and the lua treesitter query said in the repro, line
+-- `vim.api.nvim_create_user_command("DevDocs", function(args)` with the cursor on
+-- nvim_create_user_command: semantic token { type = "method", modifiers = {} }
+-- ("symbol"), or before tokens arrive / with semanticTokensProvider disabled
+-- (NvChad) the captures variable, variable.member, function.call ("unknown").
+-- lua~5.1 has no entry for any candidate.
+local NVIM_API = { "vim.api.nvim_create_user_command", "api.nvim_create_user_command", "nvim_create_user_command" }
+local function hit(name)
+  return { slug = "lua~5.1", entry = { name = name, path = "index#" .. name }, score = 50 }
+end
+
+describe("lookup.run without a decisive doc entry", function()
+  for _, class in ipairs { "unknown", "symbol", "library" } do
+    it("hovers a Neovim API function the docs do not cover (" .. class .. ")", function()
+      local c = scenario({ class = class, cands = NVIM_API, hover = true, hits = {} }, function()
+        lookup.run "section"
+      end)
+      eq(1, c.hover)
+      eq(1, #c.float)
+      eq({}, c.search)
+      eq({}, c.notify)
+    end)
+
+    it("hovers instead of the picker when only weak matches come back (" .. class .. ")", function()
+      local hits = { hit "table.insert()", hit "Insert" }
+      local c = scenario({
+        class = class,
+        cands = { "vim.fn.insert", "fn.insert", "insert" },
+        hover = true,
+        hits = hits,
+        decisive = false,
+      }, function()
+        lookup.run "section"
+      end)
+      eq(1, c.hover)
+      eq(0, c.pick)
+      eq(0, c.open)
+    end)
+
+    it("hovers when no docs are installed (" .. class .. ")", function()
+      local c = scenario({ class = class, cands = NVIM_API, hover = true, sources = 0 }, function()
+        lookup.run "section"
+      end)
+      eq(1, c.hover)
+      eq({}, c.notify)
+    end)
+  end
+
+  it("does not open lua's print() for vim.print (defaultLibrary covers vim.* too)", function()
+    local c = scenario(
+      { class = "library", cands = { "vim.print", "print" }, hover = true, hits = { hit "print()" } },
+      function()
+        lookup.run "section"
+      end
+    )
+    eq(1, c.hover)
+    eq(0, c.open)
+  end)
+
+  it("opens the doc page for a library name the docs have an exact entry for", function()
+    for _, case in ipairs {
+      { cands = { "print" }, name = "print()" },
+      { cands = { "string.format", "format" }, name = "string.format()" },
+    } do
+      local c = scenario({ class = "library", cands = case.cands, hover = true, hits = { hit(case.name) } }, function()
+        lookup.run "section"
+      end)
+      eq(0, c.hover, case.name)
+      eq(1, c.open, case.name)
+    end
+  end)
+
+  it("goes on to the docs when the hover is empty", function()
+    local hits = { hit "table.insert()", hit "Insert" }
+    local c = scenario({
+      class = "unknown",
+      cands = { "vim.fn.insert", "fn.insert", "insert" },
+      hover = true,
+      hover_results = {},
+      hits = hits,
+      decisive = false,
+    }, function()
+      lookup.run "section"
+    end)
+    eq(1, c.hover)
+    eq({}, c.float)
+    eq(1, c.pick)
+  end)
+
+  it("keeps the configured fallback for keywords and builtins the docs lack", function()
+    for _, class in ipairs { "keyword", "builtin" } do
+      local c = scenario({ class = class, hover = true, hits = {} }, function()
+        lookup.run "section"
+      end)
+      eq(0, c.hover, class)
+      eq({ "@lua~5.4 count" }, c.search, class)
+    end
+  end)
+
+  it("hovers a variable only once when its hover is empty and the docs lack it", function()
+    local c = scenario({ class = "variable", hover = true, hover_results = {}, hits = {} }, function()
+      lookup.run "section"
+    end)
+    eq(1, c.hover)
+    eq({ "@lua~5.4 count" }, c.search)
+  end)
+
+  it("never hovers for explicit text or with lookup.smart = false", function()
+    local c = scenario({ class = "unknown", hover = true, hits = {} }, function()
+      lookup.run("section", { text = "nvim_create_user_command" })
+    end)
+    eq(0, c.hover)
+    eq({ "@lua~5.4 nvim_create_user_command" }, c.search)
+    c = scenario({ smart = false, class = "unknown", cands = NVIM_API, hover = true, hits = {} }, function()
+      lookup.run "section"
+    end)
+    eq(0, c.hover)
   end)
 end)
 

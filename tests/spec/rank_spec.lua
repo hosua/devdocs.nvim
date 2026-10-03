@@ -117,4 +117,35 @@ describe("rank", function()
     -- below 30 the fuzzy tier can match without a substring: no prefilter there
     eq(rank.lookup({ "gta" }, without, { min_score = 5 }), rank.lookup({ "gta" }, with, { min_score = 5 }))
   end)
+  describe("exact", function()
+    local function hits(...)
+      return vim.tbl_map(function(n)
+        return { slug = "lua~5.1", entry = e(n), score = 50 }
+      end, { ... })
+    end
+
+    it("is true for an entry named exactly like the qualified form", function()
+      eq(true, rank.exact(hits "string.format()", { "string.format", "format" }))
+      eq(true, rank.exact(hits "std::cout", { "std::cout", "cout" }))
+    end)
+
+    it("is true for an entry named exactly like an unqualified word", function()
+      eq(true, rank.exact(hits "print()", { "print" }))
+      eq(true, rank.exact(hits "Return", { "return" }))
+      -- the head of a chain: `vim` in `vim.api.x` is the word itself
+      eq(true, rank.exact(hits "os", { "os", "os.path.join" }))
+    end)
+
+    it("is false when only the bare word of a qualified name matches (vim.print vs print())", function()
+      eq(false, rank.exact(hits "print()", { "vim.print", "print" }))
+      eq(false, rank.exact(hits "type()", { "vim.fn.type", "fn.type", "type" }))
+    end)
+
+    it("is false for suffix, substring and fuzzy hits", function()
+      eq(false, rank.exact(hits "table.insert()", { "vim.fn.insert", "fn.insert", "insert" }))
+      eq(false, rank.exact(hits "table.insert()", { "insert" }))
+      eq(false, rank.exact(hits "Array.prototype.map()", { "arr.map", "map" }))
+      eq(false, rank.exact({}, { "vim.api.nvim_create_user_command", "nvim_create_user_command" }))
+    end)
+  end)
 end)

@@ -2,19 +2,20 @@
 --- language keyword or library API (worth a doc page) from a variable the
 --- project declared (worth an LSP hover). LSP semantic tokens win when the
 --- server sends them (they know defaultLibrary from user code); otherwise the
---- treesitter highlight captures decide. Anything ambiguous is "unknown" and
---- the lookup behaves as it did before.
+--- treesitter highlight captures decide. Anything ambiguous is "unknown".
+--- "symbol", "library" and "unknown" all mean docs first, hover when the docs
+--- have no entry named exactly like the word (lookup.lua).
 ---
 --- Classes:
 ---   "keyword"  language keyword or operator word (local, return, sizeof)
 ---   "builtin"  treesitter *.builtin capture (print, int, nil, self)
----   "library"  semantic token with the defaultLibrary modifier
+---   "library"  semantic token with the defaultLibrary modifier; not proof
+---              the docs have it: lua_ls marks Neovim's vim.* API too
 ---   "variable" a local, parameter or field the project declared (from
 ---              treesitter only when the locals query finds its definition
 ---              in the buffer)
 ---   "symbol"   a project function/type, or a variable that is part of a
----              chain (`t.field`, `vim.api`): docs first, hover when they
----              have nothing
+---              chain (`t.field`, `vim.api`)
 ---   "unknown"  no parser, no tokens, or nothing decisive
 local M = {}
 

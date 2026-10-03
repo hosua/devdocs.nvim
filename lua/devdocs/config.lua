@@ -82,12 +82,12 @@ M.defaults = {
     -- its project uses); otherwise in the newest version of every doc.
     -- "all": the buffer's docs first, then every installed doc (slow with many docs installed).
     scope = "buffer",
-    -- On :DevDocs definition / example, tell keywords and library names from the project's
-    -- own names (LSP semantic tokens, else treesitter): a local variable, parameter or field
-    -- shows vim.lsp.buf.hover() instead of a doc page, and a project function the docs do not
-    -- know shows hover before `fallback`. Only when an attached client can hover; an empty
-    -- hover goes on to the docs, and a visual selection or an explicit argument always looks
-    -- up the docs.
+    -- On :DevDocs definition / example, tell keywords and builtins from the project's own
+    -- names (LSP semantic tokens, else treesitter): a local variable, parameter or field shows
+    -- vim.lsp.buf.hover() instead of a doc page, and any other name the docs have no entry
+    -- named exactly like (`vim.api.nvim_create_user_command`) shows hover before fuzzy matches
+    -- or `fallback`. Only when an attached client can hover; an empty hover goes on to the
+    -- docs, and a visual selection or an explicit argument always looks up the docs.
     smart = true,
   },
 

@@ -3,7 +3,8 @@
 --- decisive hit opens straight away, several hits go to the picker, and
 --- none falls back per config.lookup.fallback. With config.lookup.smart a
 --- project variable under the cursor (classify.lua) shows LSP hover instead,
---- and a project symbol the docs do not know shows hover before the fallback.
+--- and any other non-keyword the docs have no entry named exactly like
+--- (rank.exact) shows hover before fuzzy matches or the fallback.
 --- An empty hover (every client errored or said nothing) goes on as if there
 --- had been no hover.
 local classify = require "devdocs.classify"
@@ -137,40 +138,53 @@ local function fallback(cands, bufdocs)
   )
 end
 
---- `then_` unless `class` is "symbol" and hover answers first.
-local function hover_symbol_or(class, bufnr, then_)
-  if not (class == "symbol" and try_hover(bufnr, then_)) then
+--- Classes looked up in the docs first that still hover when the docs have
+--- no exact entry. "library" is among them: lua_ls marks Neovim's own vim.*
+--- API defaultLibrary too, which no devdocs doc covers. Keywords and builtins
+--- are the language's own words (the docs have them); a "variable" has had
+--- its hover already; nil is an explicit lookup or lookup.smart = false.
+local HOVER_UNLESS_EXACT = { symbol = true, library = true, unknown = true }
+
+--- `then_` unless `class` may hover and hover answers first.
+local function hover_or(class, bufnr, then_)
+  if not (HOVER_UNLESS_EXACT[class or ""] and try_hover(bufnr, then_)) then
     then_()
   end
 end
 
 --- The doc half of a lookup: rank `cands` over the buffer's docs and open
---- the hit, the picker, or the fallback.
+--- the hit, the picker, or the fallback. Without an exact entry for the name
+--- (only fuzzy, suffix or bare-word matches, or none) a doc-first class shows
+--- hover instead; an empty hover goes on to those hits.
+--- @param class DevDocsTokenClass|nil nil: never hover
 local function lookup_docs(mode, bufnr, cands, class)
   local bufdocs = detect.buffer(bufnr)
   local order, tiers = detect.lookup_order(bufnr)
   local sources = index.sources(order, tiers)
   if #sources == 0 then
-    hover_symbol_or(class, bufnr, function()
+    hover_or(class, bufnr, function()
       no_docs(bufdocs)
     end)
     return
   end
   local hits = rank.lookup(cands, sources, { limit = 25 })
-  if #hits == 0 then
-    hover_symbol_or(class, bufnr, function()
-      fallback(cands, bufdocs)
-    end)
-    return
-  end
   local function open(hit)
     viewer.open { slug = hit.slug, path = hit.entry.path, entry = hit.entry, mode = mode }
   end
-  if rank.decisive(hits) then
-    open(hits[1])
-    return
+  local function show()
+    if #hits == 0 then
+      fallback(cands, bufdocs)
+    elseif rank.decisive(hits) then
+      open(hits[1])
+    else
+      picker.pick_hits(hits, ("DevDocs: %s"):format(cands[1]), open)
+    end
   end
-  picker.pick_hits(hits, ("DevDocs: %s"):format(cands[1]), open)
+  if rank.exact(hits, cands) then
+    show()
+  else
+    hover_or(class, bufnr, show)
+  end
 end
 
 --- @param mode "section"|"examples"|"page"
@@ -189,7 +203,7 @@ function M.run(mode, opts)
   -- (without it every class ends at the docs, so classifying is wasted).
   local explicit = text ~= nil and text ~= ""
   local smart = not explicit and config.get().lookup.smart and M.can_hover(bufnr)
-  local class = smart and classify.cursor(bufnr) or "unknown"
+  local class = smart and classify.cursor(bufnr) or nil
   local function docs()
     lookup_docs(mode, bufnr, cands, class)
   end
