@@ -1,0 +1,88 @@
+# release-health.yml - installed by the gh-releases-project-maintenance skill (optional).
+#
+# Zero-AI weekly check (Mon 06:23 UTC + manual). One ubuntu-latest job, API calls only,
+# no checkout: free on public repos, ~1 min/week on private repos.
+# Opens (or updates) ONE issue titled "release-health: problems found" when:
+#   - the latest release-please run failed
+#   - a semver tag has no GitHub Release
+#   - a release body is empty or has no changelog sections (Features/Improvements/Bug Fixes)
+#   - the Release PR has been open longer than RELEASE_HEALTH_STALE_DAYS (default 30)
+#   - a merged Release PR still has the "autorelease: pending" label (tagging failed)
+# Closes that issue again when everything is clean.
+# Ignore old tags on purpose (e.g. declined backfill): repo variable
+#   RELEASE_HEALTH_IGNORE_TAGS="v0.0.2 v0.0.3"
+# Keeping release-please-action itself current is Dependabot's job (gh-cicd-project-maintenance).
+# Remove: delete this file. Nothing else depends on it.
+
+name: release-health
+
+on:
+  schedule:
+    - cron: "23 6 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+  issues: write   # open/close the single release-health issue
+
+concurrency:
+  group: release-health
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      WORKFLOW: release-please.yml
+      STALE_DAYS: ${{ vars.RELEASE_HEALTH_STALE_DAYS || '30' }}
+      IGNORE_TAGS: ${{ vars.RELEASE_HEALTH_IGNORE_TAGS || '' }}
+      TITLE: "release-health: problems found"
+    steps:
+      - name: Check releases and open/close the issue
+        shell: bash
+        run: |
+          set -euo pipefail
+          problems=""
+          add() { problems+="- $1"$'\n'; }
+
+          c=$(gh run list -R "$REPO" --workflow "$WORKFLOW" --limit 1 --json conclusion,url \
+                -q '.[0] | "\(.conclusion // "none") \(.url // "")"' 2>/dev/null || echo "none")
+          [[ $c == failure* ]] && add "latest \`$WORKFLOW\` run failed: ${c#failure }"
+
+          rels=$(gh api "repos/$REPO/releases?per_page=100")
+          for t in $(gh api "repos/$REPO/tags?per_page=100" -q '.[].name' | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' || true); do
+            [[ " $IGNORE_TAGS " == *" $t "* ]] && continue
+            body=$(jq -r --arg t "$t" '[.[] | select(.tag_name == $t)][0] | if . == null then "__MISSING__" else (.body // "") end' <<< "$rels")
+            if [[ $body == __MISSING__ ]]; then add "tag \`$t\` has no GitHub Release"
+            elif [[ -z ${body//[[:space:]]/} ]]; then add "release \`$t\` has an empty body"
+            elif ! grep -qE '^### (Features|Improvements|Bug Fixes|⚠ BREAKING CHANGES)' <<< "$body"; then
+              add "release \`$t\` has no changelog sections"
+            fi
+          done
+
+          cutoff=$(date -d "-$STALE_DAYS days" +%s)
+          while IFS=$'\t' read -r num created; do
+            [[ -z $num ]] && continue
+            (( $(date -d "$created" +%s) < cutoff )) && add "Release PR #$num open since ${created:0:10} (> $STALE_DAYS days) - merge it or close it"
+          done < <(gh pr list -R "$REPO" --state open --label "autorelease: pending" --json number,createdAt -q '.[] | [.number, .createdAt] | @tsv')
+          while IFS= read -r num; do
+            [[ -n $num ]] && add "merged Release PR #$num still labeled \`autorelease: pending\`"
+          done < <(gh pr list -R "$REPO" --state merged --label "autorelease: pending" --json number -q '.[].number')
+
+          issue=$(gh issue list -R "$REPO" --state open --search "in:title \"$TITLE\"" --json number -q '.[0].number // empty')
+          if [[ -n $problems ]]; then
+            body=$(printf '%s\n%s\n%s\n' "Weekly release-health check found:" "$problems" \
+              "Fix interactively with the \`gh-releases-project-maintenance\` skill. Run: $GITHUB_SERVER_URL/$REPO/actions/runs/$GITHUB_RUN_ID")
+            printf '%s\n' "$body" >> "$GITHUB_STEP_SUMMARY"
+            if [[ -n $issue ]]; then gh issue edit "$issue" -R "$REPO" --body "$body"
+            else gh issue create -R "$REPO" --title "$TITLE" --body "$body"; fi
+          else
+            echo "release health: all clean" >> "$GITHUB_STEP_SUMMARY"
+            [[ -n $issue ]] && gh issue close "$issue" -R "$REPO" --comment "All clean as of $(date -u +%F)."
+          fi
+          exit 0
