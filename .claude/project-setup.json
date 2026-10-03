@@ -1,0 +1,87 @@
+{
+  "schema": 1,
+  "repo": "hosua/devdocs.nvim",
+  "created": "2026-10-03",
+  "updated": "2026-10-03",
+  "declined_all": false,
+  "components": {
+    "cicd": {
+      "status": "enabled",
+      "decided": "2026-10-03",
+      "notes": "adopted existing ci.yml; added lint job (stylua 2.5.2 pinned), test matrix nvim stable + v0.11.0, concurrency, workflow_dispatch, persist-credentials false; edited: tests/run.lua (ignore nvim 0.11.0 runtime _ leak); public repo = free",
+      "files": [
+        ".github/workflows/ci.yml"
+      ]
+    },
+    "cicd-maintenance": {
+      "status": "enabled",
+      "decided": "2026-10-03",
+      "notes": "dependabot: github-actions weekly grouped; ci-health.yml weekly scheduled CI run (opens/closes a ci-health issue); edited: ci.yml (added workflow_call)",
+      "files": [
+        ".github/dependabot.yml",
+        ".github/workflows/ci-health.yml"
+      ]
+    },
+    "changelog": {
+      "status": "enabled",
+      "decided": "2026-10-03",
+      "notes": "owner: release-please (from v0.2.0 on); backfill v0.1.0..v0.2.0 (milestone tags chosen by user); 0 judged by hand; README has a brief per-version Changelog table",
+      "files": []
+    },
+    "releases": {
+      "status": "enabled",
+      "decided": "2026-10-03",
+      "notes": "release-please v5 (SHA-pinned), release-type simple, continues from 0.2.0 (bootstrap-sha 9873d0c); can_approve_pull_request_reviews=true set 2026-10-03",
+      "files": [
+        ".github/workflows/release-please.yml",
+        "release-please-config.json",
+        ".release-please-manifest.json"
+      ]
+    },
+    "releases-maintenance": {
+      "status": "enabled",
+      "decided": "2026-10-03",
+      "notes": "release-health.yml weekly (Mon 06:23 UTC); created tags v0.1.0, v0.2.0 + GitHub Releases from CHANGELOG sections; enabled can_approve_pull_request_reviews",
+      "files": [
+        ".github/workflows/release-health.yml"
+      ],
+      "last_audit": {
+        "date": "2026-10-03",
+        "commit": "9873d0cce0536ccd1041d5a0cdfbb3cb0473de8f"
+      }
+    },
+    "readme-maintenance": {
+      "status": "enabled",
+      "decided": "2026-10-03",
+      "notes": "guard: readme-drift.yml (warn); first sync fixed C1-C3, left C4 small gaps as-is",
+      "files": [
+        ".github/workflows/readme-drift.yml"
+      ],
+      "last_synced": {
+        "commit": "9873d0cce0536ccd1041d5a0cdfbb3cb0473de8f",
+        "date": "2026-10-03"
+      }
+    },
+    "screenshots": {
+      "status": "enabled",
+      "decided": "2026-10-03",
+      "notes": "Xvfb+xterm+xdotool script docs/tapes/capture.sh (no vhs); re-run: DEVDOCS_SRC=<data dir> DEVDOCS_LAZY=<lazy dir> bash docs/tapes/capture.sh [shot...]",
+      "files": [
+        "docs/media/lookup-demo.gif",
+        "docs/media/list-demo.gif",
+        "docs/media/viewer-examples.png",
+        "docs/media/search-picker.png",
+        "docs/media/list-apply.png",
+        "docs/media/checkhealth.png",
+        "docs/tapes/capture.sh",
+        "docs/tapes/minimal_init.lua"
+      ]
+    },
+    "readme": {
+      "status": "disabled",
+      "decided": "2026-10-03",
+      "notes": "user declined a full rewrite (2026-10-03); targeted edits only: changelog table, screenshots, dependencies/install/configurations",
+      "files": []
+    }
+  }
+}
