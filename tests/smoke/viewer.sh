@@ -15,7 +15,7 @@ smoke_keys ':DevDocs definition' Enter
 sleep 0.6
 smoke_expect 'std::cout'
 smoke_expect 'extern std::ostream cout'
-smoke_expect 'o browser'
+smoke_expect '⏎ follow'
 smoke_reject 'E[0-9]+:'
 smoke_keys 'e'                               # examples only
 sleep 0.4

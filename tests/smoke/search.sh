@@ -23,7 +23,7 @@ smoke_expect 'sync_with_stdio'
 smoke_keys Enter                            # open the top hit in the viewer
 sleep 0.8
 smoke_expect 'sync_with_stdio'
-smoke_expect 'o browser'
+smoke_expect '⏎ follow'
 smoke_reject 'E[0-9]+:'
 smoke_screen | head -24
 smoke_stop; rm -rf "$work"
