@@ -287,6 +287,53 @@ editing `.nvmrc` is noticed on the next start. `:DevDocs resync` forces it now;
 back searching every enabled installed version after the buffer's own docs,
 in lookups and `:DevDocs search`.
 
+### Keywords vs. your own names
+
+`definition` and `example` on the word under the cursor first ask what kind
+of name it is (`lookup.smart`, on by default). LSP semantic tokens answer when
+the server sends them (`defaultLibrary` marks library names); otherwise the
+treesitter highlight captures of the buffer's parser do. Treesitter alone only
+calls a name a project variable when the buffer's locals query finds where it
+is declared (nvim-treesitter's; Neovim itself ships none, so for lua and c the
+plugin bundles a small one), so a library name used as a value (`error` in `pcall(error, 'x')`,
+C's `errno`) still goes to the docs first. Only the word the cursor is on is
+classified.
+
+| under the cursor | what happens |
+|---|---|
+| keyword or builtin (`return`, `int`, `print`, `printf`) | the doc page, as always |
+| a local variable, parameter or field the project declared (`count` in `local count = 1`) | LSP hover, no doc lookup (a popup saying it has no documentation when the hover is empty or no client can hover; with `lookup.explain = false` the docs, as before) |
+| a string or char literal, a comment, a number, whitespace, an operator or punctuation | a small popup at the cursor (`"DevDocs" is a string literal: nothing to document.`); no picker, no hover, no doc lookup |
+| `true`, `false`, `nil`, `NULL`, `None` | the doc page when the docs have an exact entry (JS `null`, Python `None`), else the popup |
+| a function, type, macro or variable declared in this file (`helper` in `local function helper()`) | the doc page when the docs have an exact entry, else hover, else the popup (`helper is a function (declared on line 3): no documentation.`) |
+| anything else: a library name, a project function or type, a variable in a chain (`string.format`, `helper()`, `t.field`, `vim.api.nvim_create_user_command`), or a name nothing could place | the doc page when the docs have an entry named exactly that (`string.format()`, `print()`), else hover (the matches the docs did find, or `lookup.fallback`, when the hover is empty) |
+
+![Looking up print opens its page in the viewer; on a local variable, a string literal and a comment, :DevDocs definition shows a small popup saying there is nothing to document](docs/media/explain-popup.gif)
+
+What counts as a string, comment or number comes from the first source that
+has an answer: the bundled lua and c parsers or any nvim-treesitter parser
+(code injected into a string, as in `vim.cmd("set number")`, is not treated as
+a string), else LSP semantic tokens, else Vim's `:syntax` groups. The popup
+closes when the cursor moves, and a later hover replaces it. Library names and
+undeclared or unknown identifiers behave as before, and explicit text or a
+visual selection always looks up the docs. `lookup.explain = false` restores
+the old behaviour: nothing is treated as trivial, and classifying needs a
+client that can hover. The setting only matters while `lookup.smart = true`.
+
+![The popup on a string literal: "Hello, DevDocs" is a string literal: nothing to document.](docs/media/explain-popup.png)
+
+"Exactly that" means the qualified name, or the word itself when it is not
+qualified: `vim.print` does not open lua's `print()`, and `vim.fn.insert`
+does not offer `table.insert()`. `defaultLibrary` is no proof the docs have a
+name either: lua_ls gives it to Neovim's `vim.*` API, which no devdocs doc
+covers.
+
+Hover is used only when an attached client implements `textDocument/hover`;
+without one nothing is classified and everything goes to the docs. A hover
+that comes back empty (every client errored or had nothing) counts as no
+hover. A visual selection or an explicit
+`:DevDocs definition <text>` is never second-guessed.
+
 ## Configuration
 
 ### Defaults
@@ -370,6 +417,18 @@ in lookups and `:DevDocs search`.
     -- its project uses); otherwise in the newest version of every doc.
     -- "all": the buffer's docs first, then every installed doc (slow with many docs installed).
     scope = "buffer",
+    -- On :DevDocs definition / example, tell keywords and builtins from the project's own
+    -- names (LSP semantic tokens, else treesitter): a local variable, parameter or field shows
+    -- vim.lsp.buf.hover() instead of a doc page, and any other name the docs have no entry
+    -- named exactly like (`vim.api.nvim_create_user_command`) shows hover before fuzzy matches
+    -- or `fallback`. Only when an attached client can hover; an empty hover goes on to the
+    -- docs, and a visual selection or an explicit argument always looks up the docs.
+    smart = true,
+    -- With smart: when the word under the cursor has nothing to document (a string, comment or
+    -- number, true/false/nil the docs have no entry for, whitespace or an operator, or a variable or
+    -- function declared in the file that hover has nothing on), a small popup at the cursor says so
+    -- instead of the search picker or a wrong page. false: those go to the docs like any name.
+    explain = true,
   },
 
   list = {
@@ -509,6 +568,11 @@ starlight, light blue in the default scheme.
 | `DevDocsMark` | `DiagnosticHint` |
 | `DevDocsCost` | `DiagnosticError` |
 | `DevDocsFreed` | `DiagnosticOk` |
+| `DevDocsNote` | `NormalFloat` |
+| `DevDocsNoteSubject` | `Identifier` |
+
+`DevDocsNote` and `DevDocsNoteSubject` color the "nothing to document" popup
+(`lookup.explain`): its text, and the word or literal it names.
 
 ## Hooks and API
 

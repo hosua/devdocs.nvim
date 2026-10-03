@@ -112,6 +112,41 @@ require("devdocs").setup({opts})
   lookup.scope        "buffer": only the buffer's docs when its language is
                       known, else the newest version of every doc.
                       "all": the buffer's docs, then every installed doc
+  lookup.smart        true: for the word under the cursor, a local
+                      variable, parameter or field of the project (from LSP
+                      semantic tokens, else treesitter highlight captures)
+                      shows |vim.lsp.buf.hover()| instead of a doc page, and
+                      any other name without a doc entry named exactly like
+                      it (the qualified name, or the bare word when it is
+                      not qualified) shows hover before fuzzy matches or
+                      lookup.fallback: `vim.api.nvim_create_user_command`
+                      hovers, `vim.print` does not open lua's print().
+                      Keywords and builtins still open the docs; library
+                      names (defaultLibrary, which lua_ls also gives vim.*)
+                      open them when the entry exists. Needs a client that implements
+                      textDocument/hover; a visual selection or an explicit
+                      text argument always opens the docs. From treesitter
+                      alone a name is a variable only when the locals query
+                      (nvim-treesitter's, else one bundled for lua and c)
+                      finds its declaration in the buffer. Only the word
+                      under the cursor is classified (on whitespace or
+                      punctuation: see lookup.explain). An empty hover falls
+                      through to the docs
+                                                    *devdocs-lookup-explain*
+  lookup.explain      true: with lookup.smart, a small popup at the cursor
+                      says there is nothing to document when the word is a
+                      string, char or number literal, a comment, whitespace,
+                      an operator or punctuation (no picker, no hover, no
+                      doc lookup); true, false, nil, NULL or None the docs
+                      have no exact entry for; a variable, parameter or
+                      field hover has nothing on (no client or an empty
+                      hover); or a function, type, macro or variable declared
+                      in the buffer that neither docs nor hover know. Does
+                      not need a client that can hover. Strings are detected
+                      by treesitter (code injected into a string is not a
+                      string), else LSP semantic tokens, else |:syntax|. The
+                      popup closes when the cursor moves.
+                      false: those go to the docs like any name.
 
 A lookup's language comes from the filetype, then the file extension, the
 shebang, then shell dotfiles (as $SHELL). Its version, for docs with several
@@ -232,6 +267,9 @@ than the plugin knows are never overwritten.
   DevDocsProgress DiagnosticInfo   DevDocsKey @type.builtin
   DevDocsLink Underlined           DevDocsMark DiagnosticHint
   DevDocsCost DiagnosticError      DevDocsFreed DiagnosticOk
+  DevDocsNote NormalFloat          DevDocsNoteSubject Identifier
+
+DevDocsNote and DevDocsNoteSubject color the lookup.explain popup.
 
 Key hints (manager hint line and help, viewer footer and help, apply menu)
 draw keys in DevDocsKey and actions in DevDocsDim. DevDocsKey links to

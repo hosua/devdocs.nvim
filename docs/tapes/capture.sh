@@ -4,8 +4,8 @@
 #   DEVDOCS_SRC=~/.local/share/nvim/devdocs DEVDOCS_LAZY=~/.local/share/nvim/lazy \
 #     bash docs/tapes/capture.sh [shot...]
 #
-# Shots: lookup-demo list-demo (GIFs), examples search apply health (PNGs);
-# default: all.
+# Shots: lookup-demo list-demo explain-popup (GIFs), examples search apply
+# health explain-png (PNGs); default: all.
 # DEVDOCS_SRC is only read: manifest.json, releases/ and a few docs are copied
 # into /tmp/devdocs-demo, together with this commit of the plugin
 # (git archive), so the frames show /tmp/devdocs-demo paths and nothing from
@@ -19,7 +19,7 @@ DPY=${DEMO_DISPLAY:-:99}
 OUT=$PWD/docs/media
 SLUGS=(cpp 'lua~5.4' 'lua~5.1' 'python~3.12' 'python~3.13' css javascript node)
 shots=("$@")
-[ ${#shots[@]} -eq 0 ] && shots=(lookup-demo list-demo examples search apply health)
+[ ${#shots[@]} -eq 0 ] && shots=(lookup-demo list-demo examples search apply health explain-popup explain-png)
 
 rm -rf -- "$DEMO"
 mkdir -p "$DEMO"/{repo,data/docs,home,work,xdg/{config,data,state,cache}} "$OUT"
@@ -38,6 +38,12 @@ int main() {
   std::cout << v.size() << '\n';
   return 0;
 }
+EOF
+cat >"$DEMO/work/demo.lua" <<'EOF'
+-- Greet the user
+local greeting = "Hello, DevDocs"
+local count = 42
+print(greeting, count)
 EOF
 
 Xvfb "$DPY" -screen 0 1400x900x24 -nolisten tcp >/dev/null 2>&1 &
@@ -128,6 +134,20 @@ for s in "${shots[@]}"; do
       shot list-apply 1.2 ;;
   health)
     start main.cpp && cmd ':checkhealth devdocs' && shot checkhealth 2 ;;
+  explain-popup) # print opens the docs; a local, a string and a comment get the popup
+    start demo.lua && rec explain-popup
+    keys 4 G 0 && sleep 0.4
+    typ ':DevDocs definition' && keys Return && sleep 2.2
+    keys q && sleep 0.5
+    keys 3 G 0 w && sleep 0.4
+    typ ':DevDocs definition' && keys Return && sleep 2
+    keys 2 G 0 f H && sleep 0.4
+    typ ':DevDocs definition' && keys Return && sleep 2
+    keys 1 G 0 w && sleep 0.4
+    typ ':DevDocs definition' && keys Return && sleep 2
+    stop_rec ;;
+  explain-png) # the popup on a string literal
+    start demo.lua && keys 2 G 0 f H && cmd ':DevDocs definition' && shot explain-popup 1.2 ;;
   *) echo "unknown shot: $s" >&2; exit 2 ;;
   esac
 done

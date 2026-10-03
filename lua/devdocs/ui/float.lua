@@ -1,6 +1,8 @@
 --- Float: the one module that opens windows. A scratch buffer in a
 --- centered float (or a split / tab per view.mode), sized from the editor,
 --- re-laid-out on VimResized, with a title, a footer and buffer-local keys.
+--- M.note is the exception: a small plaintext popup at the cursor, closed on
+--- cursor move, for messages like "nothing to document".
 --- Highlight groups are `default = true` links, re-applied on every open
 --- because NvChad's base46 switches themes without a ColorScheme autocmd.
 local config = require "devdocs.config"
@@ -9,6 +11,7 @@ local hints = require "devdocs.ui.hints"
 local M = {}
 
 M.NS = vim.api.nvim_create_namespace "devdocs_float"
+M.NOTE_NS = vim.api.nvim_create_namespace "devdocs_note"
 
 --- Highlight `spans` ({ row (1-based), col_start, col_end (byte columns),
 --- hl }) in a buffer, in namespace `ns`.
@@ -41,12 +44,41 @@ M.HIGHLIGHTS = {
   DevDocsMark = "DiagnosticHint",
   DevDocsCost = "DiagnosticError",
   DevDocsFreed = "DiagnosticOk",
+  -- the small "nothing to document" popup at the cursor (M.note)
+  DevDocsNote = "NormalFloat",
+  DevDocsNoteSubject = "Identifier",
 }
 
 function M.apply_highlights()
   for name, target in pairs(M.HIGHLIGHTS) do
     vim.api.nvim_set_hl(0, name, { link = target, default = true })
   end
+end
+
+--- A small non-focusable popup at the cursor (vim.lsp.util.open_floating_preview,
+--- so it replaces an LSP hover on the same buffer and closes when the cursor
+--- moves). `opts.subject` = { row, start_col, end_col } (0-based, byte) is
+--- highlighted as DevDocsNoteSubject.
+--- @param lines string[]
+--- @param opts { subject?: integer[] }|nil
+--- @return integer buf, integer win
+function M.note(lines, opts)
+  M.apply_highlights()
+  local buf, win = vim.lsp.util.open_floating_preview(lines, "plaintext", {
+    border = M.border(),
+    focusable = false,
+    focus = false,
+    focus_id = "devdocs_note",
+    close_events = { "CursorMoved", "CursorMovedI", "InsertCharPre", "BufHidden" },
+    max_width = 80,
+    wrap = true,
+  })
+  vim.wo[win].winhighlight = "NormalFloat:DevDocsNote,FloatBorder:DevDocsBorder"
+  if opts and opts.subject then
+    local r, s, e = unpack(opts.subject)
+    vim.api.nvim_buf_set_extmark(buf, M.NOTE_NS, r, s, { end_col = e, hl_group = "DevDocsNoteSubject" })
+  end
+  return buf, win
 end
 
 --- @return string|table
