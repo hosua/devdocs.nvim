@@ -730,6 +730,22 @@ describe("viewer heading navigation (n N c C)", function()
     viewer.close()
   end)
 
+  it("e twice returns to the view e came from", function()
+    open("index", "page")
+    at(18)
+    press "e"
+    eq("examples", mode())
+    press "e"
+    eq("page", mode())
+    eq(18, cur())
+    viewer.close()
+    open("index#2.1", "section")
+    press "e"
+    press "e"
+    eq("section", mode())
+    viewer.close()
+  end)
+
   it("opens an entry without a fragment, or an unknown one, as the whole page", function()
     open("index#nope", "section")
     eq("page", mode())

@@ -353,7 +353,13 @@ local function show(view, push)
     keys["<BS>"] = act(M.back)
     keys["u"] = act(M.back)
     keys["e"] = act(function()
-      M.set_mode(self.view.mode == "examples" and "section" or "examples")
+      local view = self.view
+      if view.mode ~= "examples" then
+        M.set_mode "examples"
+      else
+        -- back to the view e came from: page_at is only set from the whole page
+        M.set_mode(view.page_at and "page" or "section")
+      end
     end)
     keys["p"] = act(M.toggle)
     keys["s"] = act(function()
@@ -610,7 +616,7 @@ function M.jump(kind, dir, count)
       list = kind == "section" and headings.stops(real, pages) or real
       if view.mode == "section" then
         local _, page = headings.page_at(pages, M.page_line(view))
-        offset = page.first - 1
+        offset = page and page.first - 1 or 0
       end
     else
       pages = nil
