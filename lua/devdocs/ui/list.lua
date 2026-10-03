@@ -481,13 +481,18 @@ local function do_filter()
 end
 
 local function do_help()
+  local lines, spans = render.help_lines(math.min(80, vim.o.columns - 4))
+  local width = 0
+  for _, l in ipairs(lines) do
+    width = math.max(width, vim.fn.strdisplaywidth(l))
+  end
   local h = float.open {
-    lines = render.HELP,
-    spans = hints.help_spans(render.HELP),
+    lines = lines,
+    spans = spans,
     title = "DevDocs manager help",
     footer = { { "q", "close" } },
-    width = 70,
-    height = #render.HELP + 2,
+    width = width + 2,
+    height = #lines + 1,
     mode = "float",
   }
   vim.keymap.set("n", "q", function()

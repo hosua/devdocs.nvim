@@ -120,6 +120,45 @@ function M.section(slug, path)
   return vim.list_slice(lines, start, stop), start
 end
 
+--- The anchor line of a path's fragment: nil without a fragment, for an
+--- unknown fragment or a missing page.
+--- @param slug string
+--- @param path string
+--- @return integer|nil
+function M.anchor(slug, path)
+  local page, frag = paths.split_fragment(path)
+  if not frag or frag == "" then
+    return nil
+  end
+  local lines = M.page(slug, page)
+  local start = lines and (store.anchors(slug)[page] or {})[frag]
+  if start and lines[start] then
+    return start
+  end
+  return nil
+end
+
+--- The pages of a path's page for the paginated view (headings.pages): the
+--- anchored definition-term lines outside fences are soft breaks, the
+--- path's own anchor (M.anchor) the hard one.
+--- @param slug string
+--- @param path string
+--- @return DevDocsPage[]|nil pages, string[]|nil lines, string|nil err
+function M.pages(slug, path)
+  local page = paths.split_fragment(path)
+  local lines, err = M.page(slug, page)
+  if not lines then
+    return nil, nil, err
+  end
+  local code, breaks = headings.fenced(lines), {}
+  for _, line in pairs(store.anchors(slug)[page] or {}) do
+    if lines[line] and not code[line] and is_term(lines[line]) then
+      breaks[line] = true
+    end
+  end
+  return headings.pages(lines, { breaks = breaks, hard = M.anchor(slug, path) }), lines
+end
+
 --- @class DevDocsCodeBlock
 --- @field lang string
 --- @field lines string[]

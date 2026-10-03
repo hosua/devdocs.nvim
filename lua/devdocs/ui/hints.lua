@@ -97,25 +97,126 @@ function M.chunks(hints, width)
   return out
 end
 
---- Key column spans of a help screen: in a section whose heading (an
---- unindented line) mentions "keys", a line indented by exactly two spaces
---- starts with a key, which ends at the first run of two or more spaces.
---- Continuation lines (deeper indent) and other sections get nothing.
---- @param lines string[]
---- @return table[] spans { row (1-based), col_start, col_end, hl }
-function M.help_spans(lines)
-  local spans, in_keys = {}, false
-  for row, line in ipairs(lines) do
-    if line ~= "" and not line:match "^%s" then
-      in_keys = line:find("keys", 1, true) ~= nil
-    elseif in_keys then
-      local key = line:match "^  (%S.-)%s%s+%S"
-      if key then
-        spans[#spans + 1] = { row = row, col_start = 2, col_end = 2 + #key, hl = M.KEY_HL }
+M.HEADER_HL = "DevDocsHelpHeader"
+M.TITLE_HL = "DevDocsHeader"
+
+local dw = vim.fn.strdisplaywidth
+
+--- Word wrap by display width. A word longer than the width stays whole;
+--- "" gives { "" }.
+--- @param text string
+--- @param width integer
+--- @return string[]
+function M.wrap(text, width)
+  local out, cur = {}, ""
+  for word in text:gmatch "%S+" do
+    if cur == "" then
+      cur = word
+    elseif dw(cur .. " " .. word) <= width then
+      cur = cur .. " " .. word
+    else
+      out[#out + 1] = cur
+      cur = word
+    end
+  end
+  out[#out + 1] = cur
+  return out
+end
+
+--- @alias DevDocsHelpRow { [1]: string, [2]: string } key (or first column), action
+--- @class DevDocsHelpTable
+--- @field header { [1]: string, [2]: string }|nil
+--- @field rows DevDocsHelpRow[]
+--- @field keys boolean|nil  first column holds keys, drawn in DevDocsKey (default true)
+
+--- A two-column table as aligned lines: indent, the key padded to the key
+--- column, gap, the action. With opts.width, actions wrap under the action
+--- column (when at least 20 cells are left for them). Spans are
+--- { row (1-based), col_start, col_end (0-based bytes), hl }: keys in
+--- DevDocsKey, the header cells in DevDocsHelpHeader, actions plain.
+--- @param tbl DevDocsHelpTable
+--- @param opts { indent?: integer, gap?: integer, key_width?: integer, width?: integer }|nil
+--- @return string[] lines, table[] spans
+function M.table(tbl, opts)
+  opts = opts or {}
+  local indent, gap = opts.indent or 2, opts.gap or 3
+  local key_width = opts.key_width
+  if not key_width then
+    key_width = tbl.header and dw(tbl.header[1]) or 0
+    for _, r in ipairs(tbl.rows) do
+      key_width = math.max(key_width, dw(r[1]))
+    end
+  end
+  local lead = string.rep(" ", indent)
+  local col = indent + key_width + gap
+  local avail = opts.width and opts.width - col
+  local lines, spans = {}, {}
+  local function cells(first, second, first_hl, second_hl, wrap)
+    local pad = string.rep(" ", key_width - dw(first) + gap)
+    local pieces = wrap and avail and avail >= 20 and M.wrap(second, avail) or { second }
+    lines[#lines + 1] = lead .. first .. pad .. pieces[1]
+    local row = #lines
+    if first_hl then
+      spans[#spans + 1] = { row = row, col_start = indent, col_end = indent + #first, hl = first_hl }
+    end
+    if second_hl then
+      local start = indent + #first + #pad
+      spans[#spans + 1] = { row = row, col_start = start, col_end = start + #pieces[1], hl = second_hl }
+    end
+    for k = 2, #pieces do
+      lines[#lines + 1] = string.rep(" ", col) .. pieces[k]
+    end
+  end
+  if tbl.header then
+    cells(tbl.header[1], tbl.header[2], M.HEADER_HL, M.HEADER_HL, false)
+  end
+  for _, r in ipairs(tbl.rows) do
+    cells(r[1], r[2], tbl.keys ~= false and M.KEY_HL or nil, nil, true)
+  end
+  return lines, spans
+end
+
+--- A whole help screen from blocks: "" (blank line), { title = s }
+--- (DevDocsHeader), { text = s } (a wrapped paragraph, indent 2) or a
+--- DevDocsHelpTable. Every table shares one key column width so all the
+--- actions line up.
+--- @param blocks (string|table)[]
+--- @param opts { indent?: integer, gap?: integer, width?: integer }|nil
+--- @return string[] lines, table[] spans
+function M.help(blocks, opts)
+  opts = opts or {}
+  local key_width = 0
+  for _, b in ipairs(blocks) do
+    if type(b) == "table" and b.rows then
+      key_width = math.max(key_width, b.header and dw(b.header[1]) or 0)
+      for _, r in ipairs(b.rows) do
+        key_width = math.max(key_width, dw(r[1]))
       end
     end
   end
-  return spans
+  local lines, spans = {}, {}
+  local topt = { indent = opts.indent, gap = opts.gap, width = opts.width, key_width = key_width }
+  for _, b in ipairs(blocks) do
+    if b == "" then
+      lines[#lines + 1] = ""
+    elseif b.title then
+      lines[#lines + 1] = b.title
+      spans[#spans + 1] = { row = #lines, col_start = 0, col_end = #b.title, hl = M.TITLE_HL }
+    elseif b.text then
+      local indent = string.rep(" ", opts.indent or 2)
+      for _, piece in ipairs(M.wrap(b.text, opts.width and opts.width - #indent or math.huge)) do
+        lines[#lines + 1] = indent .. piece
+      end
+    else
+      local tl, ts = M.table(b, topt)
+      for _, sp in ipairs(ts) do
+        sp.row = sp.row + #lines
+        spans[#spans + 1] = sp
+      end
+      vim.list_extend(lines, tl)
+    end
+  end
+  return lines, spans
 end
 
 return M

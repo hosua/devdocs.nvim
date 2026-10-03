@@ -38,6 +38,8 @@ M.HIGHLIGHTS = {
   -- Special, the old link, is red in starlight
   DevDocsKey = "@type.builtin",
   DevDocsLink = "Underlined",
+  -- column headers of the help tables: neovim has no Bold group
+  DevDocsHelpHeader = { bold = true },
   DevDocsMark = "DiagnosticHint",
   DevDocsCost = "DiagnosticError",
   DevDocsFreed = "DiagnosticOk",
@@ -45,7 +47,11 @@ M.HIGHLIGHTS = {
 
 function M.apply_highlights()
   for name, target in pairs(M.HIGHLIGHTS) do
-    vim.api.nvim_set_hl(0, name, { link = target, default = true })
+    if type(target) == "table" then
+      vim.api.nvim_set_hl(0, name, vim.tbl_extend("force", target, { default = true }))
+    else
+      vim.api.nvim_set_hl(0, name, { link = target, default = true })
+    end
   end
 end
 

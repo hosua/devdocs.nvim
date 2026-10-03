@@ -625,49 +625,91 @@ function M.plan_lines(plan, sizes, width, notes)
   return lines, spans
 end
 
+--- The manager's help screen as blocks for hints.help: a table of keys, a
+--- Marks table, then the columns of the list.
 M.HELP = {
-  "DevDocs manager keys",
+  { title = "DevDocs manager keys" },
   "",
-  "  j/k, ↑/↓, gg/G, <C-d>/<C-u>, PgUp/PgDn   move",
-  "  }/{          next / previous section",
-  "  <Tab>        expand (▸) or collapse (▾) a language's versions",
-  "  l / h        expand / collapse; h on a version folds its language",
-  "  i            install the version under the cursor; on a language,",
-  "               its installed current version or else the newest",
-  "  X            uninstall it (asks first); on a language, every installed",
-  "               version the filter shows",
-  "  u            update it (a language: its outdated versions);",
-  "               U updates every outdated doc",
-  "  e            enable / disable it for lookups and search",
-  "  <CR>         open the doc in the viewer;  o opens it on devdocs.io",
-  "  /            filter (type, <Esc> clears, <CR> keeps);  s toggles name/size sort",
-  "  r            refresh the docs list from devdocs.io",
-  "  A            install every doc (asks first)",
-  "  V … X/d      delete the installed docs in a visual selection (asks first)",
+  {
+    header = { "Key", "Action" },
+    rows = {
+      { "j / k, ↓ / ↑", "move a row" },
+      { "gg / G", "first / last row (Home / End too)" },
+      { "Ctrl-d / Ctrl-u", "a screen down / up" },
+      { "PgDn / PgUp", "a screen down / up" },
+      { "} / {", "next / previous section" },
+      { "Tab (<Tab>)", "expand (▸) or collapse (▾) a language's versions" },
+      { "l / h", "expand / collapse; h on a version folds its language" },
+      { "i", "install the version under the cursor; on a language, its installed current version or else the newest" },
+      { "X", "uninstall it (asks first); on a language, every installed version the filter shows" },
+      { "u", "update it (a language: its outdated versions)" },
+      { "U", "update every outdated doc" },
+      { "e", "enable / disable it for lookups and search" },
+      { "Enter (<CR>)", "open the doc in the viewer" },
+      { "o", "open it on devdocs.io" },
+      { "/", "filter as you type (Esc clears, Enter keeps)" },
+      { "s", "sort by name / size" },
+      { "r", "refresh the docs list from devdocs.io" },
+      { "A", "install every doc (asks first)" },
+      { "V … X, V … d", "delete the installed docs in a visual selection (asks first)" },
+    },
+  },
   "",
-  "  m            mark / unmark the doc, installed or not (a language: its",
-  "               shown installed versions, else its newest version)",
-  "  V … m        mark every doc in a visual selection (again: unmark)",
-  "  M            clear every mark; the status line shows how many are marked",
-  "  S, :w        apply the marks: install the marked docs that are not",
-  "               installed, uninstall the installed ones (a menu lists both",
-  "               with the disk used / freed; y or ⏎ applies, n/q/Esc cancels)",
-  "               marks outlive filters; the menu says how many it hides",
+  { title = "Marks" },
+  {
+    rows = {
+      {
+        "m",
+        "mark / unmark the doc, installed or not (a language: its shown installed versions, else its newest version)",
+      },
+      { "V … m", "mark every doc in a visual selection (again: unmark)" },
+      { "M", "clear every mark; the status line shows how many are marked" },
+      {
+        "S, :w",
+        "apply the marks: install the marked docs that are not installed, uninstall the installed ones; a menu lists both with the disk used / freed (y or Enter applies, n, q or Esc cancels). Marks outlive filters; the menu says how many it hides",
+      },
+    },
+  },
+  {
+    text = "While marks are pending i, X, V … X/d and u do nothing (they would bypass the marks); the hint line shows S apply N marked instead.",
+  },
   "",
-  "  While marks are pending i, X, V … X/d and u do nothing (they would",
-  "  bypass the marks); the hint line shows S apply N marked instead.",
-  "  D            prune this language: keep its newest enabled installed",
-  "               version and any version a project pins, delete the rest",
-  "  gD           the same for every language (:DevDocs prune)",
-  "  ?            this help;  q closes",
+  {
+    rows = {
+      {
+        "D",
+        "prune this language: keep its newest enabled installed version and any version a project pins, delete the rest",
+      },
+      { "gD", "the same for every language (:DevDocs prune)" },
+      { "?", "this help" },
+      { "q, Esc", "close" },
+    },
+  },
   "",
-  "Columns",
-  "  Version      (current) is DevDocs' rolling latest; a language shows",
-  "               its installed version, or how many are installed",
-  "  Size         download size; a language sums its installed versions",
-  "  Released     when that version of the docs was released;",
-  "               ≈ is an estimate from DevDocs' last update of it",
-  "  Pages        pages installed",
+  { title = "Columns" },
+  {
+    header = { "Column", "Meaning" },
+    keys = false,
+    rows = {
+      {
+        "Version",
+        "(current) is DevDocs' rolling latest; a language shows its installed version, or how many are installed",
+      },
+      { "Size", "download size; a language sums its installed versions" },
+      {
+        "Released",
+        "when that version of the docs was released; ≈ is an estimate from DevDocs' last update of it",
+      },
+      { "Pages", "pages installed" },
+    },
+  },
 }
+
+--- The help screen's lines and highlight spans, wrapped to `width` cells.
+--- @param width integer|nil
+--- @return string[] lines, table[] spans
+function M.help_lines(width)
+  return hints.help(M.HELP, { width = width })
+end
 
 return M

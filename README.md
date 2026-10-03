@@ -21,7 +21,7 @@ int main╭──────────────── C++ › Input/output
 ~       │to a stream buffer of implementation-defined type (derived from │
 ~       │std::streambuf), associated with the standard C output stream   │
 ~       │stdout.                                                         │
-~       ╰─ ⏎ follow  ⌫ back  e examples  p page  n/N section  c/C chapter  s search  ? help  q close ─╯
+~       ╰─ ⏎ follow  ⌫ back  e examples  p paginated  n/N section  c/C chapter  s search  ? help  q close ─╯
 ```
 
 The data comes from the same files devdocs' own `thor docs:download` uses
@@ -106,19 +106,27 @@ Inside the **viewer**:
 | `q`, `<Esc>` | close |
 | `o` | open this page on devdocs.io |
 | `y` | yank the devdocs.io url |
-| `<CR>`, double-click | follow the link under the cursor (links between docs stay in the viewer) |
-| `<BS>`, `u` | back (through links, `e` and `p`, to where the cursor was) |
-| `e` | only the examples of this section (whole page's examples when it has none) |
-| `p` | the whole page, scrolled to the section you were reading (`<BS>` returns to the section) |
+| `<CR>` (Enter), double-click | follow the link under the cursor (links between docs stay in the viewer) |
+| `<BS>` (Backspace), `u` | back (through links, `e` and `p`, to where the cursor was) |
+| `e` | only the examples of this entry, or of the page shown after paging (the whole page's examples when it has none) |
+| `p` | toggle between one page at a time (*paginated*) and the whole doc page (*pages*), keeping your place; the footer shows what `p` switches to (`p pages` / `p paginated`) |
 | `s` | search inside this doc |
 | `?` | help |
 | `n` / `N` | next / previous section: the next heading of any level, put at the top of the window (`3n` moves three) |
 | `c` / `C` | next / previous chapter: the page's top-level headings (those under the title when the title is the only one) |
 
-In the section view these move inside the section while it has a heading in
-that direction, and otherwise open the whole page at the next one (`<BS>`
-returns to the section). In the examples view they step between examples.
-`n`/`N` do not repeat a search in the viewer: use `/<CR>` and `?<CR>`.
+**Pages.** An entry that points into a page (Python, Lua, Rust, ...) opens
+*paginated*: one section at a time, starting at the entry. A page is a
+heading of any level, or a definition with an anchor (Python's
+`os.path.join()`), and its text up to the next one. A section with fewer than
+5 non-blank lines under its title is shown together with the following
+section(s) until there are 5 or the doc ends. The title shows `(3/12)`. An
+entry that is a whole page (most C++ and MDN entries) opens whole; `p`
+paginates it at the cursor. In the paginated view `n`/`N`/`c`/`C` turn to the
+page that holds the next heading, with the cursor on it at the top; turning
+pages is not on the history, `p` and `e` are (`<BS>` undoes them). In the
+examples view they step between examples. `n`/`N` do not repeat a search in
+the viewer: use `/<CR>` and `?<CR>`.
 
 Inside the **search picker** (telescope): `<C-t>` toggles grep / entry-name
 mode, `<CR>` opens in the viewer, `<C-x>` / `<C-v>` / `<C-t>ab` open in a
@@ -410,7 +418,9 @@ theme's builtin-type color: teal `#13C299` in NvChad's starlight theme,
 cyan `#8cf8f7` in Neovim's default scheme (also what NvChad shows until its
 treesitter highlights load). `Special` was not used because starlight makes
 it red (`#FF4D51`). Marks (`DevDocsMark`, `DiagnosticHint`) stay a different hue: purple in
-starlight, light blue in the default scheme.
+starlight, light blue in the default scheme. Help screens are tables: keys in
+`DevDocsKey`, the column headers (Key / Action) in `DevDocsHelpHeader`, titles
+in `DevDocsHeader`.
 
 | group | default |
 |---|---|
@@ -427,6 +437,7 @@ starlight, light blue in the default scheme.
 | `DevDocsProgress` | `DiagnosticInfo` |
 | `DevDocsKey` | `@type.builtin` |
 | `DevDocsLink` | `Underlined` |
+| `DevDocsHelpHeader` | bold (`{ bold = true }`, not a link) |
 | `DevDocsMark` | `DiagnosticHint` |
 | `DevDocsCost` | `DiagnosticError` |
 | `DevDocsFreed` | `DiagnosticOk` |
