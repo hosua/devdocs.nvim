@@ -125,6 +125,9 @@ files' mtimes once per session). See :DevDocs detect and :DevDocs resync.
   p           the whole page       s   search inside this doc
   ?           help
 
+  `p` opens the whole page scrolled to the section being shown; `<BS>`
+  returns to the section.
+
 ==============================================================================
 5. MANAGER KEYS                                               *devdocs-manager*
 

@@ -116,3 +116,109 @@ describe("viewer (pure parts)", function()
     eq(nil, (viewer.parse_devdocs_url "https://devdocs.io/css"))
   end)
 end)
+
+describe("viewer p (whole page at the current section)", function()
+  local root = tmpdir()
+  -- a short float, so the page is taller than the window and scrolling shows
+  config.resolve { data_dir = root, view = { height = 6 } }
+  store.invalidate()
+  local slug = "lua~5.4"
+  store.write_json(paths.meta_file(slug), { slug = slug, name = "Lua", doc_version = "5.4" }, "meta")
+  store.write_file(paths.entries_file(slug), store.encode_entries {})
+  local page = { "# Lua manual", "" }
+  for i = 3, 19 do
+    page[i] = ("intro %d"):format(i)
+  end
+  vim.list_extend(page, {
+    "### assert (v [, message])", -- 20
+    "",
+    "Raises an error if v is false.",
+    "",
+    "```lua",
+    "assert(io.open(f))",
+    "```",
+    "",
+    "### error (message)", -- 28
+    "",
+  })
+  for i = 30, 50 do
+    page[i] = ("outro %d"):format(i)
+  end
+  store.write_file(paths.page_file(slug, "index"), table.concat(page, "\n") .. "\n")
+  store.write_json(
+    paths.anchors_file(slug),
+    { pages = { index = { ["pdf-assert"] = 20, ["pdf-error"] = 28 } } },
+    "anchors"
+  )
+  store.invalidate()
+  local entry = { name = "assert()", path = "index#pdf-assert", type = "Standard Libraries" }
+
+  local function topline()
+    return vim.fn.getwininfo(vim.api.nvim_get_current_win())[1].topline
+  end
+  local function title()
+    local t = vim.api.nvim_win_get_config(0).title
+    return type(t) == "table" and t[1][1] or t
+  end
+
+  it("knows the page line a view's section starts at", function()
+    eq(20, viewer.page_line { slug = slug, path = entry.path, entry = entry, mode = "section" })
+    eq(28, viewer.page_line { slug = slug, path = "index#pdf-error", entry = nil, mode = "examples" })
+    eq(1, viewer.page_line { slug = slug, path = "index", entry = nil, mode = "section" })
+    eq(1, viewer.page_line { slug = slug, path = "index#nope", entry = nil, mode = "section" })
+    eq(1, viewer.page_line { slug = slug, path = "missing#x", entry = nil, mode = "section" })
+  end)
+
+  it("opens the whole page with the section heading at the top", function()
+    viewer.open { slug = slug, path = entry.path, entry = entry, mode = "section" }
+    eq("### assert (v [, message])", vim.api.nvim_get_current_line())
+    viewer.set_mode "page"
+    eq("page", viewer.current_view().mode)
+    eq(50, vim.api.nvim_buf_line_count(0))
+    eq(20, vim.api.nvim_win_get_cursor(0)[1])
+    eq("### assert (v [, message])", vim.api.nvim_get_current_line())
+    eq(20, topline())
+    ok(title():find("assert()", 1, true), title())
+    local footer = vim.api.nvim_win_get_config(0).footer
+    ok(vim.inspect(footer):find("o browser", 1, true), vim.inspect(footer))
+  end)
+
+  it("goes back to the section view from the page", function()
+    viewer.back()
+    eq("section", viewer.current_view().mode)
+    eq("### assert (v [, message])", vim.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+    eq(1, vim.api.nvim_win_get_cursor(0)[1])
+    viewer.close()
+  end)
+
+  it("opens the page at the section from the examples view too", function()
+    viewer.open { slug = slug, path = entry.path, entry = entry, mode = "examples" }
+    viewer.set_mode "page"
+    eq(20, vim.api.nvim_win_get_cursor(0)[1])
+    eq(20, topline())
+    -- examples of the section again: the page line no longer applies
+    viewer.set_mode "examples"
+    eq(1, vim.api.nvim_win_get_cursor(0)[1])
+    eq(nil, viewer.current_view().line)
+    viewer.close()
+  end)
+
+  it("opens the page at the section from the help screen", function()
+    viewer.open { slug = slug, path = entry.path, entry = entry, mode = "section" }
+    viewer.help()
+    viewer.set_mode "page"
+    eq(20, vim.api.nvim_win_get_cursor(0)[1])
+    eq(20, topline())
+    viewer.back() -- help already put the section on the history
+    eq("section", viewer.current_view().mode)
+    viewer.close()
+  end)
+
+  it("falls back to the top of the page when the anchor is unknown", function()
+    viewer.open { slug = slug, path = "index#nope", entry = nil, mode = "section" }
+    viewer.set_mode "page"
+    eq(1, vim.api.nvim_win_get_cursor(0)[1])
+    eq(1, topline())
+    viewer.close()
+  end)
+end)

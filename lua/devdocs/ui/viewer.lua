@@ -4,7 +4,8 @@
 --- history for following devdocs:// links.
 ---
 --- Keys inside: q/<Esc> close · o browser · y yank url · <CR> follow link
---- · <BS> back · e examples · p whole page · s search this doc · ? help
+--- · <BS> back · e examples · p whole page (at this section) · s search this
+--- doc · ? help
 local config = require "devdocs.config"
 local float = require "devdocs.ui.float"
 local index = require "devdocs.index"
@@ -19,6 +20,7 @@ local M = {}
 --- @field entry DevDocsEntry|nil
 --- @field mode "section"|"page"|"examples"
 --- @field line integer|nil       line of the page to put the cursor on
+--- @field top boolean|nil         also scroll that line to the top of the window
 --- @field view_mode "float"|"split"|"vsplit"|"tab"|nil  window kind override
 
 M.FOOTER = "o browser  y url  ⏎ follow  ⌫ back  e examples  p page  s search  ? help  q close"
@@ -32,7 +34,7 @@ M.HELP = {
   "  <CR>       follow the link under the cursor (devdocs:// stays in the viewer)",
   "  <BS>, u    back to the previous page",
   "  e          only the examples of this section",
-  "  p          the whole page",
+  "  p          the whole page, scrolled to this section",
   "  s          search inside this doc",
   "  <C-f>/<C-b>, j/k, gg/G  scroll",
   "  ?          this help",
@@ -75,6 +77,16 @@ function M.render(view)
     return index.examples_markdown(blocks), title, nil
   end
   return lines, title, nil
+end
+
+--- The 1-based page line the section a view shows starts at (its anchor),
+--- so the whole page can open there. 1 without a fragment, for an unknown
+--- anchor or a missing page. Pure given the page data.
+--- @param view DevDocsView
+--- @return integer
+function M.page_line(view)
+  local _, start = index.section(view.slug, view.path)
+  return start or 1
 end
 
 local current
@@ -178,6 +190,18 @@ function M.parse_devdocs_url(url)
   return nil
 end
 
+--- Cursor on view.line (clamped), and with view.top that line at the top of
+--- the window like `zt`.
+local function place_cursor(win, view, count)
+  local line = math.max(1, math.min(view.line or 1, count))
+  pcall(vim.api.nvim_win_set_cursor, win, { line, 0 })
+  if view.top then
+    vim.api.nvim_win_call(win, function()
+      vim.cmd "normal! zt"
+    end)
+  end
+end
+
 local function show(view, push_history)
   local lines, title, err = M.render(view)
   if err then
@@ -196,7 +220,7 @@ local function show(view, push_history)
     current.float:set_lines(display)
     apply_links(current.float.buf, links)
     current.float:set_title(title, M.FOOTER)
-    vim.api.nvim_win_set_cursor(current.float.win, { math.min(view.line or 1, #lines), 0 })
+    place_cursor(current.float.win, view, #lines)
   else
     local keys = {}
     local self = { view = view, history = {} }
@@ -245,7 +269,7 @@ local function show(view, push_history)
     self.links = links
     apply_links(self.float.buf, links)
     if view.line then
-      pcall(vim.api.nvim_win_set_cursor, self.float.win, { math.min(view.line, #lines), 0 })
+      place_cursor(self.float.win, view, #lines)
     end
   end
   store.push_recent(view.slug, view.path, view.entry and view.entry.name or index.title(lines))
@@ -278,12 +302,26 @@ function M.current_view()
   return current and current.view or nil
 end
 
+--- Switch the current view to another mode. Into "page" from a section, its
+--- examples or the help screen, the page opens at that section's heading;
+--- the section view goes on the history (help already put it there), so
+--- <BS> returns to it.
+--- @param mode "section"|"page"|"examples"
 function M.set_mode(mode)
   if not current then
     return
   end
-  local v = vim.tbl_extend("force", current.view, { mode = mode })
-  show(v, false)
+  local from = current.view
+  local v = vim.tbl_extend("force", from, { mode = mode })
+  local push = false
+  if mode ~= "page" then
+    -- view.line is a page line; it means nothing in a section or examples
+    v.line, v.top = nil, nil
+  elseif from.mode ~= "page" then
+    v.line, v.top = M.page_line(from), true
+    push = from.mode ~= "help"
+  end
+  show(v, push)
 end
 
 function M.browser()
