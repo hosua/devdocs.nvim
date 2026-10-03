@@ -15,7 +15,8 @@ smoke_keys ':DevDocs definition' Enter
 sleep 0.6
 smoke_expect 'std::cout'
 smoke_expect 'extern std::ostream cout'
-smoke_expect 'o browser'
+smoke_expect '⏎ follow'
+smoke_expect 'p paginated'                   # a whole C++ page: p switches to paginated
 smoke_reject 'E[0-9]+:'
 smoke_keys 'e'                               # examples only
 sleep 0.4
@@ -32,15 +33,18 @@ smoke_keys 'q'
 smoke_keys ':DevDocs open lua~5.4 assert' Enter
 sleep 0.6
 smoke_expect 'assert'
+smoke_expect 'collectgarbage'                # assert is short: its page also shows the next section
+smoke_expect 'p pages'
 smoke_reject 'E[0-9]+:'
 smoke_keys 'p'                               # whole page, scrolled to assert
 sleep 0.4
 smoke_expect 'assert \(v'
 smoke_expect 'collectgarbage'                # the next section: this is the page
+smoke_expect 'p paginated'
 smoke_reject 'Reference Manual'              # not page line 1
 smoke_reject 'E[0-9]+:'
-smoke_keys BSpace                            # back to the section
-smoke_reject 'collectgarbage'
+smoke_keys BSpace                            # back to the paginated view
+smoke_reject 'Reference Manual'
 smoke_keys 'q'
 smoke_keys ':DevDocs definition' Enter        # cursor back in main.cpp on cout
 sleep 0.6

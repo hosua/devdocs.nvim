@@ -175,13 +175,34 @@ files' mtimes once per session). See :DevDocs detect and :DevDocs resync.
   q <Esc>     close                o   open on devdocs.io
   y           yank the url         <CR> follow the link under the cursor
   <BS> u      back                 e   only the examples
-  p           the whole page       s   search inside this doc
+  p           paginated / whole    s   search inside this doc
+              page
   ?           help
+  n N         next / previous section
+  c C         next / previous chapter
 
-  `p` opens the whole page with the section being shown at the top of
-  the window (whatever 'scrolloff' is); `<BS>` returns to the section.
-  `e` and `p` both go on the history, and `<BS>` puts the cursor back
-  where it was in each view.
+  A section is any heading (# to ######) outside code blocks. A chapter
+  is a heading at the page's chapter level or above: the shallowest
+  level that repeats after the page's first heading (its title), e.g.
+  "# 3 - The Language" in the Lua manual, "## Syntax" on an MDN page.
+  A count moves that many headings; the heading goes to the top of the
+  window and the jump is on the jumplist (|''|, |CTRL-O|). In the examples
+  view they step between examples. n and N do not repeat a search here:
+  use /<CR> and ?<CR>.
+
+  An entry that points into a page (Python, Lua, Rust, ...) opens
+  paginated: one section at a time, starting at the entry. A page is a
+  heading of any level, or a definition with an anchor (Python's
+  `os.path.join()`), and its text up to the next one. A section with fewer
+  than 5 non-blank lines under its title is shown together with the
+  following section(s) until there are 5 or the doc ends. The title shows
+  (3/12). An entry that is a whole page (most C++ and MDN entries) opens
+  whole; `p` paginates it at the cursor. `p` toggles between the paginated
+  view and the whole page, keeping your place; the footer shows what it
+  switches to (`p pages` / `p paginated`). Paginated, n N c C turn to the
+  page that holds the next heading, with the cursor on it at the top;
+  turning pages is not on the history. `e` and `p` both go on the history,
+  and `<BS>` puts the cursor back where it was in each view.
 
 ==============================================================================
 5. MANAGER KEYS                                               *devdocs-manager*
@@ -267,6 +288,7 @@ than the plugin knows are never overwritten.
   DevDocsProgress DiagnosticInfo   DevDocsKey @type.builtin
   DevDocsLink Underlined           DevDocsMark DiagnosticHint
   DevDocsCost DiagnosticError      DevDocsFreed DiagnosticOk
+  DevDocsHelpHeader bold
   DevDocsNote NormalFloat          DevDocsNoteSubject Identifier
 
 DevDocsNote and DevDocsNoteSubject color the lookup.explain popup.
@@ -274,7 +296,9 @@ DevDocsNote and DevDocsNoteSubject color the lookup.explain popup.
 Key hints (manager hint line and help, viewer footer and help, apply menu)
 draw keys in DevDocsKey and actions in DevDocsDim. DevDocsKey links to
 @type.builtin: teal in NvChad's starlight theme, cyan in Neovim's default
-scheme (Special is red in starlight). Override it like any group: >lua
+scheme (Special is red in starlight). Help screens are tables: keys in
+DevDocsKey, the column headers (Key / Action) in DevDocsHelpHeader (bold),
+titles in DevDocsHeader. Override a group like any other: >lua
   vim.api.nvim_set_hl(0, "DevDocsKey", { fg = "#21BFC2" })
 <
 ==============================================================================

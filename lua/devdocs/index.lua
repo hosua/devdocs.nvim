@@ -2,6 +2,7 @@
 --- merged for lookup, a page's lines, the slice of a page an entry points
 --- at (via anchors.json), the fenced code blocks of a slice (examples), and
 --- the breadcrumb shown as a viewer title. Reads files; caches through store.
+local headings = require "devdocs.headings"
 local paths = require "devdocs.paths"
 local store = require "devdocs.store"
 
@@ -57,7 +58,8 @@ end
 --- The slice of a page an entry points at.
 --- With a fragment: from the anchor line to the next heading of the same or a
 --- higher level (or, when the anchor is a definition term, to the next term
---- at the same indent or any heading). Without: the whole page.
+--- at the same indent or any heading). Without: the whole page. Lines in
+--- fenced code are never boundaries.
 --- @param slug string
 --- @param path string "library/os.path#os.path.join"
 --- @return string[]|nil lines, integer|nil start 1-based line in the page, string|nil err
@@ -76,11 +78,15 @@ function M.section(slug, path)
     -- unknown fragment: whole page, but say where we would have gone
     return lines, 1
   end
+  local code = headings.fenced(lines)
+  local function level_at(i)
+    return code[i] and 0 or heading_level(lines[i])
+  end
   local level = heading_level(lines[start])
   local stop = #lines
   if level > 0 then
     for i = start + 1, #lines do
-      local l = heading_level(lines[i])
+      local l = level_at(i)
       if l > 0 and l <= level then
         stop = i - 1
         break
@@ -90,11 +96,11 @@ function M.section(slug, path)
     local indent = #(lines[start]:match "^(%s*)")
     for i = start + 1, #lines do
       local line = lines[i]
-      if heading_level(line) > 0 then
+      if level_at(i) > 0 then
         stop = i - 1
         break
       end
-      if is_term(line) and #(line:match "^(%s*)") <= indent then
+      if not code[i] and is_term(line) and #(line:match "^(%s*)") <= indent then
         stop = i - 1
         break
       end
@@ -102,7 +108,7 @@ function M.section(slug, path)
   else
     -- an anchor on plain text: until the next heading
     for i = start + 1, #lines do
-      if heading_level(lines[i]) > 0 then
+      if level_at(i) > 0 then
         stop = i - 1
         break
       end
@@ -112,6 +118,45 @@ function M.section(slug, path)
     stop = stop - 1
   end
   return vim.list_slice(lines, start, stop), start
+end
+
+--- The anchor line of a path's fragment: nil without a fragment, for an
+--- unknown fragment or a missing page.
+--- @param slug string
+--- @param path string
+--- @return integer|nil
+function M.anchor(slug, path)
+  local page, frag = paths.split_fragment(path)
+  if not frag or frag == "" then
+    return nil
+  end
+  local lines = M.page(slug, page)
+  local start = lines and (store.anchors(slug)[page] or {})[frag]
+  if start and lines[start] then
+    return start
+  end
+  return nil
+end
+
+--- The pages of a path's page for the paginated view (headings.pages): the
+--- anchored definition-term lines outside fences are soft breaks, the
+--- path's own anchor (M.anchor) the hard one.
+--- @param slug string
+--- @param path string
+--- @return DevDocsPage[]|nil pages, string[]|nil lines, string|nil err
+function M.pages(slug, path)
+  local page = paths.split_fragment(path)
+  local lines, err = M.page(slug, page)
+  if not lines then
+    return nil, nil, err
+  end
+  local code, breaks = headings.fenced(lines), {}
+  for _, line in pairs(store.anchors(slug)[page] or {}) do
+    if lines[line] and not code[line] and is_term(lines[line]) then
+      breaks[line] = true
+    end
+  end
+  return headings.pages(lines, { breaks = breaks, hard = M.anchor(slug, path) }), lines
 end
 
 --- @class DevDocsCodeBlock
@@ -158,6 +203,8 @@ function M.code_blocks(lines)
 end
 
 --- Markdown for the examples of a section: each block with its caption.
+--- A block whose code contains ``` is fenced with ```` (like convert does),
+--- so its inner fence lines stay code.
 --- @param blocks DevDocsCodeBlock[]
 --- @return string[]
 function M.examples_markdown(blocks)
@@ -166,9 +213,16 @@ function M.examples_markdown(blocks)
     if b.caption ~= "" then
       out[#out + 1] = ("**%s**"):format(b.caption)
     end
-    out[#out + 1] = "```" .. b.lang
+    local fence = "```"
+    for _, l in ipairs(b.lines) do
+      if l:find("```", 1, true) then
+        fence = "````"
+        break
+      end
+    end
+    out[#out + 1] = fence .. b.lang
     vim.list_extend(out, b.lines)
-    out[#out + 1] = "```"
+    out[#out + 1] = fence
     if i < #blocks then
       out[#out + 1] = ""
     end

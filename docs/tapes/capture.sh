@@ -4,8 +4,9 @@
 #   DEVDOCS_SRC=~/.local/share/nvim/devdocs DEVDOCS_LAZY=~/.local/share/nvim/lazy \
 #     bash docs/tapes/capture.sh [shot...]
 #
-# Shots: lookup-demo list-demo explain-popup (GIFs), examples search apply
-# health explain-png (PNGs); default: all.
+# Shots: lookup-demo list-demo viewer-paging explain-popup (GIFs), examples
+# search apply health help explain-png (PNGs; `help` writes viewer-help.png);
+# default: all.
 # DEVDOCS_SRC is only read: manifest.json, releases/ and a few docs are copied
 # into /tmp/devdocs-demo, together with this commit of the plugin
 # (git archive), so the frames show /tmp/devdocs-demo paths and nothing from
@@ -19,7 +20,7 @@ DPY=${DEMO_DISPLAY:-:99}
 OUT=$PWD/docs/media
 SLUGS=(cpp 'lua~5.4' 'lua~5.1' 'python~3.12' 'python~3.13' css javascript node)
 shots=("$@")
-[ ${#shots[@]} -eq 0 ] && shots=(lookup-demo list-demo examples search apply health explain-popup explain-png)
+[ ${#shots[@]} -eq 0 ] && shots=(lookup-demo list-demo viewer-paging examples search apply health help explain-popup explain-png)
 
 rm -rf -- "$DEMO"
 mkdir -p "$DEMO"/{repo,data/docs,home,work,xdg/{config,data,state,cache}} "$OUT"
@@ -46,6 +47,15 @@ local count = 42
 print(greeting, count)
 EOF
 
+cat >"$DEMO/work/paging.lua" <<'EOF'
+local function parse(s)
+  local n = assert(tonumber(s), "not a number")
+  return n
+end
+
+print(parse("42"))
+EOF
+
 Xvfb "$DPY" -screen 0 1400x900x24 -nolisten tcp >/dev/null 2>&1 &
 xvfb=$!
 term=
@@ -65,7 +75,7 @@ start() {
     XDG_STATE_HOME="$DEMO/xdg/state" XDG_CACHE_HOME="$DEMO/xdg/cache" \
     DEVDOCS_DATA="$DEMO/data" DEVDOCS_LAZY="$LAZY" \
     xterm -T devdocs-demo -geometry 120x34+0+0 -fa 'DejaVu Sans Mono' -fs 11 \
-    -bg '#14161b' -fg '#e0e2ea' -bw 0 +sb -e \
+    -bg '#14161b' -fg '#e0e2ea' -bw 0 +sb -xrm 'XTerm*backarrowKey: false' -e \
     nvim --clean -u "$DEMO/repo/docs/tapes/minimal_init.lua" "$DEMO/work/$1" &
   term=$!
   for _ in $(seq 50); do
@@ -116,6 +126,16 @@ for s in "${shots[@]}"; do
     keys BackSpace && sleep 1.2
     keys p && sleep 2.2
     keys q && stop_rec ;;
+  viewer-paging) # assert opens paginated; n turns the page, c a chapter, p toggles whole/paginated
+    start paging.lua && rec viewer-paging
+    keys 2 G && sleep 0.4 && keys 0 1 2 l && sleep 0.6
+    slow ':DevDocs definition' && keys Return && sleep 2.4
+    keys n && sleep 1.6
+    keys n && sleep 1.6
+    keys c && sleep 1.8
+    keys p && sleep 2.4
+    keys p && sleep 2
+    keys q && stop_rec ;;
   list-demo) # browse the manager, expand Lua, mark python versions, apply menu
     start main.cpp && rec list-demo
     slow ':DevDocs list' && keys Return && sleep 2
@@ -132,6 +152,8 @@ for s in "${shots[@]}"; do
   apply) # mark python~3.14 (install) and python~3.13 (uninstall), then S
     start main.cpp && cmd ':DevDocs list' && sleep 1.5 && typ '/python' && keys Return Tab j m m S &&
       shot list-apply 1.2 ;;
+  help) # `?` in the viewer: aligned Key / Action table with a bold header
+    start main.cpp && keys 6 G 0 7 l && cmd ':DevDocs definition' && sleep 1.5 && keys question && shot viewer-help 1.2 ;;
   health)
     start main.cpp && cmd ':checkhealth devdocs' && shot checkhealth 2 ;;
   explain-popup) # print opens the docs; a local, a string and a comment get the popup

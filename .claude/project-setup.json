@@ -65,7 +65,7 @@
     "screenshots": {
       "status": "enabled",
       "decided": "2026-10-03",
-      "notes": "Xvfb+xterm+xdotool script docs/tapes/capture.sh (no vhs); re-run: DEVDOCS_SRC=<data dir> DEVDOCS_LAZY=<lazy dir> bash docs/tapes/capture.sh [shot...]",
+      "notes": "Xvfb+xterm+xdotool script docs/tapes/capture.sh (no vhs); re-run: DEVDOCS_SRC=<data dir> DEVDOCS_LAZY=<lazy dir> bash docs/tapes/capture.sh [shot...]; viewer-paging and viewer-help added; xterm backarrowKey off so xdotool BackSpace reaches nvim as <BS>",
       "files": [
         "docs/media/lookup-demo.gif",
         "docs/media/list-demo.gif",
@@ -75,6 +75,8 @@
         "docs/media/checkhealth.png",
         "docs/tapes/capture.sh",
         "docs/tapes/minimal_init.lua",
+        "docs/media/viewer-paging.gif",
+        "docs/media/viewer-help.png",
         "docs/media/explain-popup.gif",
         "docs/media/explain-popup.png"
       ]

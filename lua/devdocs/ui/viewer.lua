@@ -1,13 +1,14 @@
---- Viewer: shows one doc page (or the section an entry points at, or only
---- its examples) in a float. Rendering of the header/footer is pure
+--- Viewer: shows one doc page (or one page of it at a time, starting at the
+--- entry, or only its examples) in a float. Rendering of the header/footer is pure
 --- (render()) so it is tested; one viewer is reused while open and keeps a
 --- history for following devdocs:// links.
 ---
 --- Keys inside: q/<Esc> close · o browser · y yank url · <CR> follow link
---- · <BS> back · e examples · p whole page (at this section) · s search this
---- doc · ? help
+--- · <BS> back · n/N next/previous section · c/C next/previous chapter · e
+--- examples · p toggle paginated / whole page · s search this doc · ? help
 local config = require "devdocs.config"
 local float = require "devdocs.ui.float"
+local headings = require "devdocs.headings"
 local index = require "devdocs.index"
 local paths = require "devdocs.paths"
 local store = require "devdocs.store"
@@ -18,42 +19,96 @@ local M = {}
 --- @field slug string
 --- @field path string      page path with optional fragment
 --- @field entry DevDocsEntry|nil
---- @field mode "section"|"page"|"examples"
+--- @field mode "section"|"page"|"examples"|"help"  "section" is the paginated view
 --- @field line integer|nil       line of the shown text to put the cursor on
 --- @field top boolean|nil         also scroll that line to the top of the window
 --- @field topline integer|nil     first visible line to restore (history entries)
---- @field page_at integer|nil     page line to return to on p from e (no fragment)
+--- @field page_at integer|nil     whole-page line to return to on p / e from the examples
+--- @field page_start integer|nil  paginated: first page line of the shown page; nil = the page of the entry's anchor
+--- @field under "section"|"page"|"examples"|nil  help only: the mode under the help screen
 --- @field view_mode "float"|"split"|"vsplit"|"tab"|nil  window kind override
 
 local hints = require "devdocs.ui.hints"
 M.FOOTER = {
-  { "o", "browser" },
-  { "y", "url" },
   { "⏎", "follow" },
   { "⌫", "back" },
   { "e", "examples" },
-  { "p", "page" },
+  { "p", "pages" },
+  { "n/N", "section" },
+  { "c/C", "chapter" },
   { "s", "search" },
   { "?", "help" },
   { "q", "close" },
+  -- least used last: a narrow float drops trailing hints, and ? lists them
+  { "o", "browser" },
+  { "y", "url" },
 }
+
+--- The footer hints for a mode: p names the view it switches to, so
+--- "paginated" in the whole-page view and "pages" otherwise.
+--- @param mode string
+--- @return DevDocsHint[]
+function M.footer(mode)
+  local out = {}
+  for _, h in ipairs(M.FOOTER) do
+    out[#out + 1] = h[1] == "p" and { "p", mode == "page" and "paginated" or "pages" } or h
+  end
+  return out
+end
 
 M.HELP = {
-  "DevDocs viewer keys",
+  { title = "DevDocs viewer keys" },
   "",
-  "  q, <Esc>   close",
-  "  o          open this page on devdocs.io",
-  "  y          yank the devdocs.io url",
-  "  <CR>       follow the link under the cursor (devdocs:// stays in the viewer)",
-  "  <BS>, u    back to the previous page",
-  "  e          only the examples of this section",
-  "  p          the whole page, scrolled to this section",
-  "  s          search inside this doc",
-  "  <C-f>/<C-b>, j/k, gg/G  scroll",
-  "  ?          this help",
+  {
+    header = { "Key", "Action" },
+    rows = {
+      { "q, Esc", "close the viewer" },
+      { "o", "open this page on devdocs.io" },
+      { "y", "yank (copy) the devdocs.io url" },
+      { "Enter (<CR>), double-click", "follow the link under the cursor (devdocs:// links stay in the viewer)" },
+      { "Backspace (<BS>), u", "back to the previous view (links, e, p and ? go on the history)" },
+      { "e", "only the examples of this entry or page (e again: back)" },
+      { "p", "toggle paginated / pages (the whole doc page), keeping your place" },
+      { "s", "search inside this doc" },
+      {
+        "n / N",
+        "next / previous section: any heading (3n moves three); paginated, past the page's end it turns the page",
+      },
+      { "c / C", "next / previous chapter: the page's top-level headings" },
+      { "Ctrl-f / Ctrl-b", "scroll a screen down / up" },
+      { "Ctrl-d / Ctrl-u", "scroll half a screen down / up" },
+      { "j / k", "a line down / up" },
+      { "gg / G", "top / bottom of the page" },
+      { "/ Enter, ? Enter", "repeat the last search forward / backward (n and N move by section here)" },
+      { "?", "this help (Backspace returns)" },
+    },
+  },
 }
 
+--- The help screen's lines and highlight spans, wrapped to `width` cells.
+--- @param width integer|nil
+--- @return string[] lines, table[] spans
+function M.help_lines(width)
+  return hints.help(M.HELP, { width = width })
+end
+
+--- The page of a view's pages that its cursor line falls on.
+--- @param view DevDocsView
+--- @return DevDocsPage[]|nil pages, integer|nil i, DevDocsPage|nil page, string[]|nil all, string|nil err
+local function shown_page(view)
+  local pages, all, err = index.pages(view.slug, view.path)
+  if not pages then
+    return nil, nil, nil, nil, err
+  end
+  local i, page = headings.page_at(pages, M.page_line(view))
+  return pages, i, page, all, nil
+end
+
 --- The lines to show for a view, plus a title. Pure given the page data.
+--- Paginated ("section"): the page holding the view's page line, with
+--- (i/n) in the title when there are several. Examples: the code blocks of
+--- the shown page (the entry's own slice until a page was turned to),
+--- falling back to the whole page's.
 --- @param view DevDocsView
 --- @return string[] lines, string title, string|nil err
 function M.render(view)
@@ -61,6 +116,15 @@ function M.render(view)
   local lines, err
   if view.mode == "page" then
     lines, err = index.page(view.slug, view.path)
+  elseif view.mode == "section" or view.page_start then
+    local pages, i, page, all
+    pages, i, page, all, err = shown_page(view)
+    if pages and page then
+      lines = headings.page_lines(all, page)
+      if view.mode == "section" and #pages > 1 then
+        title = ("%s (%d/%d)"):format(title, i, #pages)
+      end
+    end
   else
     local _
     lines, _, err = index.section(view.slug, view.path)
@@ -92,14 +156,25 @@ function M.render(view)
   return lines, title, nil
 end
 
---- The 1-based page line the section a view shows starts at (its anchor),
---- so the whole page can open there. 1 without a fragment, for an unknown
---- anchor or a missing page. Pure given the page data.
+--- The 1-based page line the paginated view is at: the first line of the
+--- page it was turned to, else the entry's anchor, else 1 (no fragment, an
+--- unknown anchor or a missing page). Pure given the page data.
 --- @param view DevDocsView
 --- @return integer
 function M.page_line(view)
-  local _, start = index.section(view.slug, view.path)
-  return start or 1
+  return view.page_start or index.anchor(view.slug, view.path) or 1
+end
+
+--- A view whose paginated mode has nothing to start at (no fragment or an
+--- unknown one, and no page turned to) is the whole page. Returns the view
+--- itself unless it has to change.
+--- @param view DevDocsView
+--- @return DevDocsView
+function M.normalize(view)
+  if view.mode == "section" and view.page_start == nil and index.anchor(view.slug, view.path) == nil then
+    return vim.tbl_extend("force", view, { mode = "page" })
+  end
+  return view
 end
 
 local current
@@ -259,7 +334,7 @@ local function show(view, push)
     current.links = links
     current.float:set_lines(display)
     apply_links(current.float.buf, links)
-    current.float:set_title(title, M.FOOTER)
+    current.float:set_title(title, M.footer(view.mode))
     place_cursor(current.float.win, view, #lines)
   else
     local keys = {}
@@ -278,11 +353,15 @@ local function show(view, push)
     keys["<BS>"] = act(M.back)
     keys["u"] = act(M.back)
     keys["e"] = act(function()
-      M.set_mode(self.view.mode == "examples" and "section" or "examples")
+      local view = self.view
+      if view.mode ~= "examples" then
+        M.set_mode "examples"
+      else
+        -- back to the view e came from: page_at is only set from the whole page
+        M.set_mode(view.page_at and "page" or "section")
+      end
     end)
-    keys["p"] = act(function()
-      M.set_mode "page"
-    end)
+    keys["p"] = act(M.toggle)
     keys["s"] = act(function()
       local slug = self.view.slug
       M.close()
@@ -290,11 +369,23 @@ local function show(view, push)
         require("devdocs").search("@" .. slug .. " ")
       end)
     end)
+    keys["n"] = act(function()
+      M.jump("section", 1, vim.v.count1)
+    end)
+    keys["N"] = act(function()
+      M.jump("section", -1, vim.v.count1)
+    end)
+    keys["c"] = act(function()
+      M.jump("chapter", 1, vim.v.count1)
+    end)
+    keys["C"] = act(function()
+      M.jump("chapter", -1, vim.v.count1)
+    end)
     keys["?"] = act(M.help)
     self.float = float.open {
       lines = display,
       title = title,
-      footer = M.FOOTER,
+      footer = M.footer(view.mode),
       filetype = "markdown",
       mode = view.view_mode,
       name = ("devdocs://%s/%s"):format(view.slug, view.path),
@@ -322,7 +413,7 @@ local function show(view, push)
   end
 end
 
---- Open a page/section/examples view.
+--- Open a paginated/page/examples view.
 --- @param view DevDocsView
 function M.open(view)
   view.mode = view.mode or "section"
@@ -330,7 +421,7 @@ function M.open(view)
     notify(("%s is not installed (:DevDocs install %s)"):format(view.slug, view.slug), vim.log.levels.WARN)
     return
   end
-  show(view, current ~= nil)
+  show(M.normalize(view), current ~= nil)
 end
 
 function M.close()
@@ -345,33 +436,93 @@ function M.current_view()
   return current and current.view or nil
 end
 
---- Switch the current view to another mode (e and p). Into "page" from a
---- section, its examples or the help screen, the page opens at that
---- section's heading; a page without a fragment (a search hit) opens at the
---- line it was left at. The view switched from goes on the history (help
---- already put its view there), so <BS> walks back through e and p alike.
+--- The cursor line and top line of the viewer window, or of the view
+--- snapshot a help screen stands over.
+--- @param from DevDocsView
+--- @return integer|nil cur, integer|nil top
+local function window_position(from)
+  if from.mode == "help" then
+    return from.line, from.topline
+  end
+  if not current.float:valid() then
+    return nil, nil
+  end
+  local win = current.float.win
+  local top = vim.api.nvim_win_call(win, function()
+    return vim.fn.winsaveview().topline
+  end)
+  return vim.api.nvim_win_get_cursor(win)[1], top
+end
+
+--- Switch the current view to another mode (p and e). "page" is the whole
+--- doc page and "section" the paginated view; the position carries over
+--- (the same text stays under the cursor and, when possible, at the same
+--- scroll position). Into the examples the page line is remembered for the
+--- way back. The view switched from goes on the history (help already put
+--- its view there), so <BS> walks back through e and p alike.
 --- @param mode "section"|"page"|"examples"
 function M.set_mode(mode)
   if not current or current.view.mode == mode then
     return
   end
   local from = current.view
+  local src = from.mode == "help" and from.under or from.mode
+  local cur, top = window_position(from)
   local v = vim.tbl_extend("force", from, { mode = mode })
   -- a `nil` in tbl_extend's table is no key at all: clear the scroll
   -- position a history entry carried, or place_cursor restores it over `zt`
-  v.topline = nil
-  if mode ~= "page" then
-    -- view.line is a line of the page; remember it for the way back to p
-    if from.mode == "page" and current.float:valid() then
-      v.page_at = vim.api.nvim_win_get_cursor(current.float.win)[1]
+  v.topline, v.under = nil, nil
+  if mode == "page" then
+    if src == "section" then
+      local _, _, page = shown_page(from)
+      local first = page and page.first or 1
+      v.line, v.top = first + (cur or 1) - 1, nil
+      v.topline = top and first + top - 1 or nil
+    elseif from.page_at then
+      v.line, v.top = from.page_at, nil
+    else
+      v.line, v.top = M.page_line(from), true
+    end
+    v.page_start = nil
+  elseif mode == "section" then
+    if src == "page" then
+      local line = cur or 1
+      local pages = index.pages(from.slug, from.path)
+      local _, page = headings.page_at(pages or {}, line)
+      local first = page and page.first or 1
+      v.page_start, v.line, v.top = first, line - first + 1, nil
+      v.topline = top and top >= first and top - first + 1 or nil
+    else
+      -- from the examples: the page the whole-page cursor was on, if any
+      if from.page_at then
+        local pages = index.pages(from.slug, from.path)
+        local _, page = headings.page_at(pages or {}, from.page_at)
+        v.page_start = page and page.first or v.page_start
+      end
+      v.line, v.top = nil, nil
+    end
+    v.page_at = nil
+  else
+    -- view.line is a line of the shown text; remember the whole-page one
+    -- for the way back
+    if src == "page" then
+      v.page_at = cur
     end
     v.line, v.top = nil, nil
-  elseif from.path:find("#", 1, true) then
-    v.line, v.top = M.page_line(from), true
-  else
-    v.line, v.top = from.page_at or (from.mode == "help" and from.line) or 1, nil
   end
   show(v, from.mode ~= "help")
+end
+
+--- p: toggle between the paginated view and the whole page. From the help
+--- screen it acts on the view under it; from the examples it goes to the
+--- whole page.
+function M.toggle()
+  if not current then
+    return
+  end
+  local view = current.view
+  local base = view.mode == "help" and view.under or view.mode
+  M.set_mode(base == "page" and "section" or "page")
 end
 
 function M.browser()
@@ -414,7 +565,7 @@ function M.follow()
       pcall(vim.ui.open, paths.browser_url(slug, path))
       return
     end
-    show({ slug = slug, path = path, entry = index.entry_for_path(slug, path), mode = "section" }, true)
+    show(M.normalize { slug = slug, path = path, entry = index.entry_for_path(slug, path), mode = "section" }, true)
     return
   end
   local ok = pcall(vim.ui.open, url)
@@ -435,17 +586,85 @@ function M.back()
   show(prev, false)
 end
 
-function M.help()
-  if not current then
+--- Move to the next (dir 1) or previous (dir -1) heading, count times.
+--- kind "section": any heading (paginated: also the start of every page);
+--- "chapter": one at the page's chapter level or shallower
+--- (headings.chapter_level, of the whole doc page's headings). The target
+--- goes to the top of the window and the jump on the jumplist. Paginated:
+--- a target outside the shown page turns to the page that holds it, the
+--- target at its top (not on the history). Examples view: each example is a
+--- section and a chapter. Help: nothing.
+--- @param kind "section"|"chapter"
+--- @param dir integer 1 or -1
+--- @param count integer|nil
+function M.jump(kind, dir, count)
+  if not current or not current.float:valid() then
     return
   end
-  local v = vim.tbl_extend("force", current.view, { mode = "help" })
+  local view, win, buf = current.view, current.float.win, current.float.buf
+  if view.mode == "help" then
+    return
+  end
+  local list, offset, pages = nil, 0, nil
+  if view.mode == "examples" then
+    list = headings.blocks(vim.api.nvim_buf_get_lines(buf, 0, -1, false))
+  else
+    local all
+    pages, all = index.pages(view.slug, view.path)
+    if pages and all then
+      local real = headings.parse(all)
+      list = kind == "section" and headings.stops(real, pages) or real
+      if view.mode == "section" then
+        local _, page = headings.page_at(pages, M.page_line(view))
+        offset = page and page.first - 1 or 0
+      end
+    else
+      pages = nil
+      list = headings.parse(vim.api.nvim_buf_get_lines(buf, 0, -1, false))
+    end
+  end
+  local cursor = vim.api.nvim_win_get_cursor(win)[1]
+  local target = headings.target(list, cursor + offset, dir, kind, count)
+  if not target then
+    local what = view.mode == "examples" and "example" or kind
+    notify(("no %s %s"):format(dir > 0 and "next" or "previous", what))
+    return
+  end
+  local line = target - offset
+  if line >= 1 and line <= vim.api.nvim_buf_line_count(buf) then
+    vim.api.nvim_win_call(win, function()
+      vim.cmd "normal! m'"
+      vim.api.nvim_win_set_cursor(win, { line, 0 })
+      vim.cmd "normal! zt"
+    end)
+    return
+  end
+  if view.mode ~= "section" or not pages then
+    return
+  end
+  -- paginated, target on another page: turn to it
+  local _, page = headings.page_at(pages, target)
+  local v = vim.tbl_extend("force", view, { page_start = page.first, line = target - page.first + 1, top = true })
+  v.topline = nil
+  show(v, false)
+end
+
+function M.help()
+  if not current or not current.float:valid() or current.view.mode == "help" then
+    return
+  end
+  local v = vim.tbl_extend("force", snapshot(), { mode = "help", under = current.view.mode })
   push_history()
   current.view = v
   current.links = {}
-  current.float:set_lines(M.HELP)
+  local lines, spans = M.help_lines(vim.api.nvim_win_get_width(current.float.win))
+  current.float:set_lines(lines)
   apply_links(current.float.buf, {})
-  float.highlight(current.float.buf, NS, hints.help_spans(M.HELP))
+  float.highlight(current.float.buf, NS, spans)
+  -- the page under may have been scrolled: show the help from its title
+  vim.api.nvim_win_call(current.float.win, function()
+    vim.fn.winrestview { topline = 1, lnum = 1, col = 0 }
+  end)
   current.float:set_title("DevDocs help", { { "⌫", "back" }, { "q", "close" } })
 end
 
