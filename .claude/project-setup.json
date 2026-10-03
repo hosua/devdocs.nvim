@@ -21,6 +21,12 @@
         ".github/dependabot.yml",
         ".github/workflows/ci-health.yml"
       ]
+    },
+    "changelog": {
+      "status": "enabled",
+      "decided": "2026-10-03",
+      "notes": "owner: release-please (from v0.2.0 on); backfill v0.1.0..v0.2.0 (milestone tags chosen by user); 0 judged by hand; README has a brief per-version Changelog table",
+      "files": []
     }
   }
 }

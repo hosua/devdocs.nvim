@@ -449,6 +449,15 @@ docs, the docs list age, the release dates cache and the install source.
   `import.all = true` keeps every version and switches per project. The
   detected version comes from the project files listed above.
 
+## Changelog
+
+| Version | Highlights |
+|---|---|
+| [0.2.0](https://github.com/hosua/devdocs.nvim/releases/tag/v0.2.0) | `:DevDocs list` grouped by language with bulk delete/prune; faster scoped lookups; `p` opens at the current section |
+| [0.1.0](https://github.com/hosua/devdocs.nvim/releases/tag/v0.1.0) | First release: installer, converter, viewer, search picker, list manager, mirror, checkhealth |
+
+See [CHANGELOG.md](CHANGELOG.md) for release history.
+
 ## Development
 
 ```
