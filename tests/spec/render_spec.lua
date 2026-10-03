@@ -403,7 +403,7 @@ describe("render.plan_lines", function()
     ok(uline:find "%+45%.6 MB$", uline)
     eq(60, vim.fn.strdisplaywidth(iline))
     eq({ "-12.3 MB" }, span_text(lines, spans, "DevDocsCost"))
-    eq({ "+45.6 MB" }, span_text(lines, spans, "DevDocsFreed"))
+    eq({ "+45.6 MB", "+33.3 MB" }, span_text(lines, spans, "DevDocsFreed")) -- group total, then net
     local n, nl = find(lines, "node")
     ok(n > ih and n < uh, nl)
     ok(nl:find("Node.js 24.1.0 (current)", 1, true), nl)
@@ -423,6 +423,97 @@ describe("render.plan_lines", function()
     local _, pl = find(lines, "python~3%.9")
     ok(pl:find "%?%s*$", pl)
     eq({}, span_text(lines, spans, "DevDocsCost"))
+  end)
+
+  describe("disk summary", function()
+    local function summary(lines)
+      local out = {}
+      for _, l in ipairs(lines) do
+        if l:find "Disk used:" or l:find "Disk freed:" or l:find "Net:" then
+          out[#out + 1] = l
+        end
+      end
+      return out
+    end
+
+    local function right(text)
+      return string.rep(" ", 60 - #text) .. text
+    end
+
+    it("right-aligns used, freed and a green net when more is freed than used", function()
+      local lines, spans = render.plan_lines(PLAN, SIZES, 60)
+      local rows = summary(lines)
+      eq(3, #rows, table.concat(lines, "\n"))
+      -- 12.3 MB used, 45.6 MB freed, net +33.3 MB
+      eq(right " Disk used:   12.3 MB", rows[1])
+      eq(right "Disk freed:   45.6 MB", rows[2])
+      eq(right "       Net:  +33.3 MB", rows[3])
+      for _, l in ipairs(rows) do
+        eq(60, vim.fn.strdisplaywidth(l))
+      end
+      local net_row = find(lines, "Net:")
+      local hit
+      for _, sp in ipairs(spans) do
+        if sp.row == net_row and sp.hl == "DevDocsFreed" then
+          hit = sp
+        end
+      end
+      ok(hit, "net span")
+      eq("+33.3 MB", rows[3]:sub(hit.col_start + 1, hit.col_end))
+      eq(#rows[3], hit.col_end)
+      -- the group total keeps its own green span; the net adds exactly one more
+      eq({ "+45.6 MB", "+33.3 MB" }, span_text(lines, spans, "DevDocsFreed"))
+      eq({ "-12.3 MB" }, span_text(lines, spans, "DevDocsCost"))
+      -- sits between the groups and the footer
+      local ul = find(lines, "python~3%.9")
+      ok(find(lines, "Disk used:") > ul and net_row < #lines)
+    end)
+
+    it("shows a red negative net when the installs take more than the uninstalls free", function()
+      local plan = { install = PLAN.install, uninstall = PLAN.uninstall, unknown = {} }
+      local lines, spans = render.plan_lines(plan, { node = 40e6, ["python~3.13"] = 20e6, ["python~3.9"] = 5e6 }, 60)
+      local rows = summary(lines)
+      eq(right " Disk used:   60.0 MB", rows[1])
+      eq(right "Disk freed:    5.0 MB", rows[2])
+      eq(right "       Net:  -55.0 MB", rows[3])
+      eq({ "-60.0 MB", "-55.0 MB" }, span_text(lines, spans, "DevDocsCost"))
+      eq({ "+5.0 MB" }, span_text(lines, spans, "DevDocsFreed"))
+    end)
+
+    it("omits Disk freed for an install-only plan and Disk used for an uninstall-only one", function()
+      local lines, spans = render.plan_lines({ install = PLAN.install, uninstall = {}, unknown = {} }, SIZES, 60)
+      local rows = summary(lines)
+      eq(2, #rows, table.concat(lines, "\n"))
+      eq(right "Disk used:   12.3 MB", rows[1])
+      eq(right "      Net:  -12.3 MB", rows[2])
+      eq({ "-12.3 MB", "-12.3 MB" }, span_text(lines, spans, "DevDocsCost"))
+
+      lines, spans = render.plan_lines({ install = {}, uninstall = PLAN.uninstall, unknown = {} }, SIZES, 60)
+      rows = summary(lines)
+      eq(2, #rows, table.concat(lines, "\n"))
+      eq(right "Disk freed:   45.6 MB", rows[1])
+      eq(right "        Net:  +45.6 MB", rows[2])
+      eq({ "+45.6 MB", "+45.6 MB" }, span_text(lines, spans, "DevDocsFreed"))
+    end)
+
+    it("shows 0 B in normal text (no color span) when used equals freed", function()
+      local lines, spans = render.plan_lines(
+        { install = { PLAN.install[1] }, uninstall = PLAN.uninstall, unknown = {} },
+        { node = 10e6, ["python~3.9"] = 10e6 },
+        60
+      )
+      local rows = summary(lines)
+      ok(rows[3]:find "Net:%s+0 B$", rows[3])
+      eq({ "-10.0 MB" }, span_text(lines, spans, "DevDocsCost"))
+      eq({ "+10.0 MB" }, span_text(lines, spans, "DevDocsFreed"))
+    end)
+
+    it("aligns by display width and fits a narrow menu", function()
+      local lines = render.plan_lines(PLAN, SIZES, 30)
+      for _, l in ipairs(summary(lines)) do
+        eq(30, vim.fn.strdisplaywidth(l))
+      end
+    end)
   end)
 
   it("adds note lines (hidden marks, unknown slugs) before the footer", function()

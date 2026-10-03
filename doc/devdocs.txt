@@ -175,8 +175,12 @@ DevDocs build date used when none is known), Pages, Notes.
               installed, uninstall the marked installed ones. A centered
               menu lists "Install (N)" with the disk the downloads take
               ("-12.3 MB", DevDocsCost, red) and "Uninstall (N)" with the
-              disk freed ("+45.6 MB", DevDocsFreed, green) and how many
-              marks the filter hides. y or <CR> applies, n q <Esc>
+              disk freed ("+45.6 MB", DevDocsFreed, green). At the bottom
+              right, in normal text, "Disk used" and "Disk freed" (each
+              left out when its group is empty) and "Net" = freed - used:
+              "+33.3 MB" in DevDocsFreed (green) when space is gained,
+              "-X MB" in DevDocsCost (red) when it is consumed, "0 B" when
+              even. The menu also says how many marks the filter hides. y or <CR> applies, n q <Esc>
               cancels. Applied marks clear, failed ones stay. :wq and :x
               apply, then close the list (not when the menu is cancelled).
   V v ... X d uninstall the installed docs in the visual selection

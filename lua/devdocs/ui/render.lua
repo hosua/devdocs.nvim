@@ -493,11 +493,56 @@ local function wrap(text, width)
   return out
 end
 
+--- Net disk change as text and highlight: "+X" green when space is gained,
+--- "-X" red when consumed, "0 B" unhighlighted when it is exactly zero.
+local function net_text(net)
+  if net == 0 then
+    return "0 B", nil
+  end
+  local sign, hl = "+", "DevDocsFreed"
+  if net < 0 then
+    sign, hl = "-", "DevDocsCost"
+  end
+  return signed(sign, math.abs(net)), hl
+end
+
+--- Appends the right-aligned "Disk used / Disk freed / Net" block (labels
+--- and the used / freed numbers in the window's normal text, only the net
+--- colored) to `lines` / `spans`. `t.used` / `t.freed` are bytes or nil.
+local function summary(lines, spans, width, t)
+  local rows = {}
+  if t.used then
+    rows[#rows + 1] = { "Disk used:", signed("", t.used) }
+  end
+  if t.freed then
+    rows[#rows + 1] = { "Disk freed:", signed("", t.freed) }
+  end
+  local net, net_hl = net_text((t.freed or 0) - (t.used or 0))
+  rows[#rows + 1] = { "Net:", net, net_hl }
+  local label_w, num_w = 0, 0
+  for _, r in ipairs(rows) do
+    label_w = math.max(label_w, vim.fn.strdisplaywidth(r[1]))
+    num_w = math.max(num_w, vim.fn.strdisplaywidth(r[2]))
+  end
+  local lead = math.max(0, width - label_w - 2 - num_w)
+  lines[#lines + 1] = ""
+  for _, r in ipairs(rows) do
+    local line = string.rep(" ", lead + label_w - vim.fn.strdisplaywidth(r[1])) .. r[1]
+    line = line .. string.rep(" ", 2 + num_w - vim.fn.strdisplaywidth(r[2])) .. r[2]
+    lines[#lines + 1] = line
+    if r[3] then
+      spans[#spans + 1] = { row = #lines, col_start = #line - #r[2], col_end = #line, hl = r[3] }
+    end
+  end
+end
+
 --- Lines and highlight spans of the apply-marks menu (:w / S): an
 --- "Install (N)" group with the disk it takes ("-12.3 MB", DevDocsCost) and
 --- an "Uninstall (N)" group with the disk it frees ("+45.6 MB",
 --- DevDocsFreed), one line per doc (slug, name and version, size; "?" when
---- unknown), an empty group left out; then `notes` and the key footer.
+--- unknown), an empty group left out; a right-aligned "Disk used / Disk
+--- freed / Net" block (net green when space is gained, red when consumed);
+--- then `notes` and the key footer.
 --- Every line is at most `width` display cells. Pure.
 --- @param plan { install: table[], uninstall: table[] } selection.plan()
 --- @param sizes table<string, number> slug -> bytes
@@ -548,6 +593,20 @@ function M.plan_lines(plan, sizes, width, notes)
   end
   group("Install", plan.install or {}, "-", "DevDocsCost")
   group("Uninstall", plan.uninstall or {}, "+", "DevDocsFreed")
+  local function total(entries)
+    local t = 0
+    for _, e in ipairs(entries) do
+      t = t + (sizes[e.slug] or 0)
+    end
+    return t
+  end
+  local used, freed = total(plan.install or {}), total(plan.uninstall or {})
+  if #(plan.install or {}) + #(plan.uninstall or {}) > 0 then
+    summary(lines, spans, width, {
+      used = #(plan.install or {}) > 0 and used or nil,
+      freed = #(plan.uninstall or {}) > 0 and freed or nil,
+    })
+  end
   if notes and #notes > 0 then
     lines[#lines + 1] = ""
     for _, n in ipairs(notes) do
