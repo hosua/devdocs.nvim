@@ -9,6 +9,7 @@ local manifest = require "devdocs.manifest"
 local model = require "devdocs.ui.model"
 local paths = require "devdocs.paths"
 local render = require "devdocs.ui.render"
+local selection = require "devdocs.ui.selection"
 local store = require "devdocs.store"
 
 local M = {}
@@ -171,6 +172,78 @@ local function do_update(row)
     refresh_data()
   end)
   refresh_data()
+end
+
+--- Delete several docs after one confirm that lists every slug and the
+--- disk space it frees. Marks of deleted docs drop out on the refresh.
+local function do_uninstall_many(slugs)
+  local present = vim.tbl_filter(function(s)
+    return ui.state.installed[s] ~= nil
+  end, slugs)
+  if #present == 0 then
+    notify "nothing installed to delete"
+    return
+  end
+  if not float.confirm(selection.confirm_message(present, installer.disk_usage(present), paths.docs_dir())) then
+    return
+  end
+  local n, errors = installer.uninstall_many(present)
+  if #errors > 0 then
+    notify(("deleted %d, failed %d: %s"):format(n, #errors, table.concat(errors, "; ")), vim.log.levels.WARN)
+  else
+    notify(("deleted %d doc%s"):format(n, n == 1 and "" or "s"))
+  end
+  refresh_data()
+end
+
+--- The row under the cursor, whatever its kind (group headers included).
+local function cursor_row()
+  return ui and model.rows(ui.state)[ui.state.cursor] or nil
+end
+
+--- X: the marked docs when there are marks, else the row under the cursor.
+local function do_uninstall_selection()
+  local marked = selection.targets(ui.state.marked)
+  if #marked > 0 then
+    do_uninstall_many(marked)
+    return
+  end
+  local row = current_row()
+  if row then
+    do_uninstall(row)
+  end
+end
+
+--- Delete every installed version but the current one, of one base or all.
+--- @param base string|nil
+local function do_prune(base)
+  local slugs = selection.prune_targets(ui.state.installed, ui.state.docs, base)
+  if #slugs == 0 then
+    notify(
+      base and ("%s has at most one installed version; nothing to prune"):format(base)
+        or "every language has at most one installed version; nothing to prune"
+    )
+    return
+  end
+  do_uninstall_many(slugs)
+end
+
+--- Row indexes of the visual selection, clamped to the rendered rows, and
+--- leaves visual mode. Buffer lines map to rows through HEADER_LINES + top.
+--- @return integer|nil from, integer|nil to
+local function visual_rows()
+  local a, b = vim.fn.line "v", vim.fn.line "."
+  vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "nx", false)
+  if not ui or not ui.render or #ui.render.rows == 0 then
+    return nil, nil
+  end
+  local first = render.HEADER_LINES + 1
+  local last = #ui.render.lines
+  local function to_row(line)
+    line = math.max(first, math.min(line, last))
+    return ui.state.top + line - first
+  end
+  return to_row(a), to_row(b)
 end
 
 local function do_update_all()
@@ -379,7 +452,22 @@ function M.open()
     i = with_target(function(row)
       do_install(row, row.meta ~= nil)
     end),
-    X = with_row(do_uninstall),
+    X = do_uninstall_selection,
+    m = function()
+      dispatch { type = "mark" }
+    end,
+    M = function()
+      dispatch { type = "unmark_all" }
+    end,
+    D = function()
+      local row = cursor_row()
+      if row and row.base then
+        do_prune(row.base)
+      end
+    end,
+    gD = function()
+      do_prune(nil)
+    end,
     u = with_row(do_update),
     U = do_update_all,
     e = with_target(do_toggle_enabled),
@@ -432,6 +520,25 @@ function M.open()
     end,
   }
   vim.wo[f.win].cursorline = true
+  -- visual-line selections: m marks the range, X / d deletes it
+  local function vmap(lhs, fn)
+    vim.keymap.set("x", lhs, fn, { buffer = f.buf, nowait = true, silent = true })
+  end
+  vmap("m", function()
+    local from, to = visual_rows()
+    if from then
+      dispatch { type = "mark_range", from = from, to = to }
+      dispatch { type = "goto", row = to }
+    end
+  end)
+  local function delete_range()
+    local from, to = visual_rows()
+    if from then
+      do_uninstall_many(selection.range_targets(model.rows(ui.state), from, to))
+    end
+  end
+  vmap("X", delete_range)
+  vmap("d", delete_range)
   local listener = function()
     vim.schedule(refresh_data)
   end

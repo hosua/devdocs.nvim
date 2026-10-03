@@ -211,6 +211,58 @@ function M.uninstall(slug, opts)
   end
 end
 
+--- Delete old versions: per language keep only the current one (the docs
+--- list's newest when installed, else the newest installed) and delete the
+--- other installed versions. A language with one installed version is left
+--- alone. Asks first with the full list unless `yes`.
+--- @param opts { base?: string, yes?: boolean, docs?: DevDocsDoc[], on_done?: fun(removed: integer, errors: string[]) }|nil
+---   base: only this language ("python" or any of its slugs); docs: use this
+---   docs list instead of the cached/fetched one
+function M.prune(opts)
+  opts = opts or {}
+  local installer = require "devdocs.installer"
+  local manifest = require "devdocs.manifest"
+  local paths = require "devdocs.paths"
+  local selection = require "devdocs.ui.selection"
+  local store = require "devdocs.store"
+  local function run(docs)
+    local installed = {}
+    for _, s in ipairs(store.installed()) do
+      installed[s] = store.meta(s) or {}
+    end
+    local base = opts.base and opts.base ~= "" and manifest.base(opts.base) or nil
+    local slugs = selection.prune_targets(installed, docs, base)
+    if #slugs == 0 then
+      notify(
+        base and ("%s has at most one installed version; nothing to prune"):format(base)
+          or "every language has at most one installed version; nothing to prune"
+      )
+      return
+    end
+    local msg = selection.confirm_message(slugs, installer.disk_usage(slugs), paths.docs_dir())
+    if not opts.yes and not require("devdocs.ui.float").confirm(msg) then
+      return
+    end
+    local n, errors = installer.uninstall_many(slugs)
+    if #errors > 0 then
+      notify(("pruned %d, failed %d: %s"):format(n, #errors, table.concat(errors, "; ")), vim.log.levels.WARN)
+    else
+      notify(("pruned %d old version%s: %s"):format(n, n == 1 and "" or "s", table.concat(slugs, ", ")))
+    end
+    if opts.on_done then
+      opts.on_done(n, errors)
+    end
+  end
+  if opts.docs then
+    run(opts.docs)
+    return
+  end
+  manifest.get(function(docs)
+    -- offline: fall back to the cached list, then to "newest installed"
+    run(docs or manifest.cached() or {})
+  end)
+end
+
 --- Update one doc, or every installed doc that the manifest lists as newer.
 --- @param slug string|nil
 function M.update(slug)

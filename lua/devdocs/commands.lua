@@ -35,6 +35,9 @@ M.subcommands = {
   update = function(args)
     api().update(args[1])
   end,
+  prune = function(args, bang)
+    api().prune { base = args[1], yes = bang }
+  end,
   sync = function()
     api().sync()
   end,
@@ -126,6 +129,18 @@ function M.complete(arglead, cmdline, _)
     candidates = slugs(false)
   elseif sub == "uninstall" or sub == "update" or sub == "open" then
     candidates = slugs(true)
+  elseif sub == "prune" then
+    -- languages with more than one installed version
+    local count, bases = {}, {}
+    for _, s in ipairs(slugs(true)) do
+      local b = require("devdocs.manifest").base(s)
+      count[b] = (count[b] or 0) + 1
+      if count[b] == 2 then
+        bases[#bases + 1] = b
+      end
+    end
+    table.sort(bases)
+    candidates = bases
   elseif sub == "search" and arglead:sub(1, 1) == "@" then
     candidates = vim.tbl_map(function(s)
       return "@" .. s

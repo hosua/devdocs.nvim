@@ -3,6 +3,7 @@
 --- unit-tested on tables. ui/render.lua turns a state into lines, and
 --- ui/list.lua is the only part that touches a window.
 local manifest = require "devdocs.manifest"
+local selection = require "devdocs.ui.selection"
 
 local M = {}
 
@@ -417,6 +418,9 @@ function M.reduce(state, action)
   local t = action.type
   if t == "data" then
     local s = vim.tbl_extend("force", vim.deepcopy(state), action.data)
+    if s.marked then
+      s.marked = selection.cleanup(s.marked, s.installed)
+    end
     return clamp(s, M.rows(s))
   end
   local rows = M.rows(state)
@@ -457,6 +461,19 @@ function M.reduce(state, action)
       return clamp(s, rows)
     end
     return state
+  elseif t == "mark" then
+    -- netrw/oil style: toggle the row under the cursor, then step down
+    local s = vim.deepcopy(state)
+    s.marked = selection.toggle(state.marked or {}, rows[state.cursor])
+    return move(s, rows, 1)
+  elseif t == "mark_range" then
+    local s = vim.deepcopy(state)
+    s.marked = selection.mark_range(state.marked or {}, rows, action.from, action.to)
+    return s
+  elseif t == "unmark_all" then
+    return vim.tbl_extend("force", vim.deepcopy(state), { marked = {} })
+  elseif t == "marked_cleanup" then
+    return vim.tbl_extend("force", vim.deepcopy(state), { marked = selection.cleanup(state.marked, state.installed) })
   end
   return state
 end

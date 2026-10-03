@@ -30,6 +30,7 @@ local ALIASES = {
   DevDocsOpen = "open",
   DevDocsUpdate = "update",
   DevDocsUninstall = "uninstall",
+  DevDocsPrune = "prune",
   DevDocsForceCloneAndScrape = "mirror",
 }
 for name, sub in pairs(ALIASES) do
