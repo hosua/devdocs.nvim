@@ -112,6 +112,13 @@ Inside the **viewer**:
 | `p` | the whole page, scrolled to the section you were reading (`<BS>` returns to the section) |
 | `s` | search inside this doc |
 | `?` | help |
+| `n` / `N` | next / previous section: the next heading of any level, put at the top of the window (`3n` moves three) |
+| `c` / `C` | next / previous chapter: the page's top-level headings (those under the title when the title is the only one) |
+
+In the section view these move inside the section while it has a heading in
+that direction, and otherwise open the whole page at the next one (`<BS>`
+returns to the section). In the examples view they step between examples.
+`n`/`N` do not repeat a search in the viewer: use `/<CR>` and `?<CR>`.
 
 Inside the **search picker** (telescope): `<C-t>` toggles grep / entry-name
 mode, `<CR>` opens in the viewer, `<C-x>` / `<C-v>` / `<C-t>ab` open in a

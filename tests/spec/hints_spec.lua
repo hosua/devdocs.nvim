@@ -87,7 +87,7 @@ describe("key hints in the viewer and the manager help", function()
   it("the viewer footer is key / action pairs", function()
     local viewer = require "devdocs.ui.viewer"
     eq(
-      "o browser  y url  ⏎ follow  ⌫ back  e examples  p page  s search  ? help  q close",
+      "o browser  y url  ⏎ follow  ⌫ back  e examples  p page  n/N section  c/C chapter  s search  ? help  q close",
       hints.text(viewer.FOOTER)
     )
     ok(#hints.help_spans(viewer.HELP) >= 8)

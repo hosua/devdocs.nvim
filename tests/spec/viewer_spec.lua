@@ -320,3 +320,284 @@ describe("viewer p (whole page at the current section)", function()
     viewer.close()
   end)
 end)
+
+describe("viewer heading navigation (n N c C)", function()
+  local root = tmpdir()
+  config.resolve { data_dir = root, view = { height = 6 } }
+  store.invalidate()
+  local slug = "lua~5.4"
+  store.write_json(paths.meta_file(slug), { slug = slug, name = "Lua", doc_version = "5.4" }, "meta")
+  store.write_file(paths.entries_file(slug), store.encode_entries {})
+  local page = { "# Manual", "" }
+  for i = 3, 8 do
+    page[i] = ("intro %d"):format(i)
+  end
+  page[9] = "# 1 – Introduction"
+  for i = 10, 14 do
+    page[i] = ("one %d"):format(i)
+  end
+  vim.list_extend(page, {
+    "# 2 – Basic Concepts", -- 15
+    "",
+    "## 2.1 – Values", -- 17
+    "values 18",
+    "```lua", -- 19
+    "# not a heading",
+    "```",
+    "### 2.1.1 – Details", -- 22
+    "details 23",
+    "```sh",
+    "echo hi",
+    "```",
+    "## 2.2 – Environments", -- 27
+  })
+  for i = 28, 31 do
+    page[i] = ("env %d"):format(i)
+  end
+  vim.list_extend(page, { "# 3 – The Language", "lang 33", "lang 34", "**load (chunk)**" }) -- 32..35
+  for i = 36, 40 do
+    page[i] = ("lang %d"):format(i)
+  end
+  store.write_file(paths.page_file(slug, "index"), table.concat(page, "\n") .. "\n")
+  store.write_json(
+    paths.anchors_file(slug),
+    { pages = { index = { ["2"] = 15, ["2.1"] = 17, ["pdf-load"] = 35 } } },
+    "anchors"
+  )
+  store.invalidate()
+
+  local function open(path, mode, extra)
+    viewer.open(vim.tbl_extend("force", { slug = slug, path = path, mode = mode }, extra or {}))
+  end
+  local function press(keys)
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "mx", false)
+  end
+  local function cur()
+    return vim.api.nvim_win_get_cursor(0)[1]
+  end
+  local function at(line)
+    vim.api.nvim_win_set_cursor(0, { line, 0 })
+  end
+  local function topline()
+    return vim.fn.getwininfo(vim.api.nvim_get_current_win())[1].topline
+  end
+  local function mode()
+    return viewer.current_view().mode
+  end
+  local function capture(fn)
+    local saved, msgs = vim.notify, {}
+    vim.notify = function(m)
+      msgs[#msgs + 1] = m
+    end
+    local ok_run, err = pcall(fn)
+    vim.notify = saved
+    assert(ok_run, err)
+    return msgs
+  end
+  local function footer_text(footer)
+    local parts = {}
+    for _, h in ipairs(footer) do
+      parts[#parts + 1] = h[1] .. " " .. h[2]
+    end
+    return table.concat(parts, "  ")
+  end
+
+  it("maps n N c C buffer-locally in the viewer", function()
+    open("index", "page")
+    for _, lhs in ipairs { "n", "N", "c", "C" } do
+      eq(1, vim.fn.maparg(lhs, "n", false, true).buffer, lhs)
+    end
+    viewer.close()
+  end)
+
+  it("n / N move between headings of a page, skipping fenced # lines", function()
+    open("index", "page")
+    at(1)
+    press "n"
+    eq(9, cur())
+    eq(9, topline())
+    press "n"
+    eq(15, cur())
+    press "n"
+    eq(17, cur())
+    press "n"
+    eq(22, cur())
+    eq(22, topline())
+    press "N"
+    eq(17, cur())
+    at(24)
+    press "N"
+    eq(22, cur())
+    at(1)
+    press "3n"
+    eq(17, cur())
+    eq(17, topline())
+    viewer.close()
+  end)
+
+  it("c / C move between chapters", function()
+    open("index", "page")
+    at(17)
+    press "c"
+    eq(32, cur())
+    eq(32, topline())
+    press "C"
+    eq(15, cur())
+    at(18)
+    press "C"
+    eq(15, cur())
+    at(18)
+    press "2C"
+    eq(9, cur())
+    viewer.close()
+  end)
+
+  it("stays put and says so at the ends", function()
+    open("index", "page")
+    local function try(line, keys, msg)
+      at(line)
+      local msgs = capture(function()
+        press(keys)
+      end)
+      eq(line, cur())
+      eq({ "devdocs: " .. msg }, msgs)
+    end
+    try(32, "n", "no next section")
+    try(1, "N", "no previous section")
+    try(33, "c", "no next chapter")
+    try(1, "C", "no previous chapter")
+    viewer.close()
+  end)
+
+  it("puts the jump on the jumplist", function()
+    open("index", "page")
+    at(1)
+    press "n"
+    eq(9, cur())
+    vim.cmd "normal! ''"
+    eq(1, cur())
+    viewer.close()
+  end)
+
+  it("page moves do not touch the history", function()
+    open("index", "page")
+    press "n"
+    press "n"
+    local msgs = capture(function()
+      viewer.back()
+    end)
+    eq({ "devdocs: no previous page" }, msgs)
+    eq("page", mode())
+    viewer.close()
+  end)
+
+  it("section view: moves inside the slice, then opens the page at the next heading", function()
+    open("index#2.1", "section", { entry = { name = "2.1", path = "index#2.1", type = "Manual" } })
+    eq("## 2.1 – Values", vim.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+    eq(10, vim.api.nvim_buf_line_count(0))
+    press "n"
+    eq("section", mode())
+    eq(6, cur())
+    press "n"
+    eq("page", mode())
+    eq(27, cur())
+    eq(27, topline())
+    eq("index#2.1", viewer.current_view().path)
+    viewer.back()
+    eq("section", mode())
+    eq(6, cur())
+    viewer.close()
+  end)
+
+  it("section view: N and C go outside the slice onto the page", function()
+    local entry = { name = "2.1", path = "index#2.1", type = "Manual" }
+    open("index#2.1", "section", { entry = entry })
+    at(1)
+    press "N"
+    eq("page", mode())
+    eq(15, cur())
+    viewer.back()
+    at(3)
+    press "N"
+    eq("section", mode())
+    eq(1, cur())
+    press "c"
+    eq("page", mode())
+    eq(32, cur())
+    viewer.back()
+    press "C"
+    eq("page", mode())
+    eq(15, cur())
+    viewer.back()
+    at(1)
+    press "3n"
+    eq("page", mode())
+    eq(32, cur())
+    viewer.close()
+  end)
+
+  it("section view of a definition term: no next heading, N reaches the previous one", function()
+    open("index#pdf-load", "section")
+    eq("**load (chunk)**", vim.api.nvim_buf_get_lines(0, 0, 1, false)[1])
+    local msgs = capture(function()
+      press "n"
+    end)
+    eq({ "devdocs: no next section" }, msgs)
+    eq("section", mode())
+    press "N"
+    eq("page", mode())
+    eq(32, cur())
+    viewer.close()
+  end)
+
+  it("examples view steps between examples", function()
+    open("index#2.1", "examples")
+    eq(
+      { "**values 18**", "```lua", "# not a heading", "```", "", "**details 23**", "```sh", "echo hi", "```" },
+      vim.api.nvim_buf_get_lines(0, 0, -1, false)
+    )
+    at(1)
+    press "n"
+    eq(6, cur())
+    local msgs = capture(function()
+      press "n"
+    end)
+    eq(6, cur())
+    eq({ "devdocs: no next example" }, msgs)
+    press "N"
+    eq(1, cur())
+    press "c"
+    eq(6, cur())
+    eq("examples", mode())
+    viewer.close()
+  end)
+
+  it("does nothing on the help screen", function()
+    open("index#2.1", "section")
+    viewer.help()
+    local before = cur()
+    local msgs = capture(function()
+      press "n"
+      press "C"
+    end)
+    eq({}, msgs)
+    eq("help", mode())
+    eq(before, cur())
+    viewer.close()
+  end)
+
+  it("lists the keys in the footer and the help", function()
+    local footer = footer_text(viewer.FOOTER)
+    ok(footer:find("n/N section", 1, true), footer)
+    ok(footer:find("c/C chapter", 1, true), footer)
+    local help = table.concat(viewer.HELP, "\n")
+    ok(help:find("  n, N", 1, true))
+    ok(help:find("  c, C", 1, true))
+    ok(help:find("/<CR>", 1, true))
+  end)
+
+  it("viewer.jump with no viewer open is a no-op", function()
+    viewer.close()
+    viewer.jump("section", 1, 1)
+  end)
+end)

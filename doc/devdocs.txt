@@ -142,6 +142,18 @@ files' mtimes once per session). See :DevDocs detect and :DevDocs resync.
   <BS> u      back                 e   only the examples
   p           the whole page       s   search inside this doc
   ?           help
+  n N         next / previous section
+  c C         next / previous chapter
+
+  A section is any heading (# to ######) outside code blocks. A chapter
+  is a heading at the page's chapter level or above: the shallowest
+  level that repeats after the page's first heading (its title), e.g.
+  "# 3 - The Language" in the Lua manual, "## Syntax" on an MDN page.
+  A count moves that many headings; the heading goes to the top of the
+  window and the jump is on the jumplist (|''|, |CTRL-O|). In the section
+  view a heading outside the section opens the whole page there (<BS>
+  returns); in the examples view they step between examples. n and N
+  do not repeat a search here: use /<CR> and ?<CR>.
 
   `p` opens the whole page with the section being shown at the top of
   the window (whatever 'scrolloff' is); `<BS>` returns to the section.

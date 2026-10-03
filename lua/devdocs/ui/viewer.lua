@@ -4,10 +4,11 @@
 --- history for following devdocs:// links.
 ---
 --- Keys inside: q/<Esc> close · o browser · y yank url · <CR> follow link
---- · <BS> back · e examples · p whole page (at this section) · s search this
+--- · <BS> back · n/N next/previous section · c/C next/previous chapter · e examples · p whole page (at this section) · s search this
 --- doc · ? help
 local config = require "devdocs.config"
 local float = require "devdocs.ui.float"
+local headings = require "devdocs.headings"
 local index = require "devdocs.index"
 local paths = require "devdocs.paths"
 local store = require "devdocs.store"
@@ -33,6 +34,8 @@ M.FOOTER = {
   { "⌫", "back" },
   { "e", "examples" },
   { "p", "page" },
+  { "n/N", "section" },
+  { "c/C", "chapter" },
   { "s", "search" },
   { "?", "help" },
   { "q", "close" },
@@ -50,6 +53,9 @@ M.HELP = {
   "  p          the whole page, scrolled to this section",
   "  s          search inside this doc",
   "  <C-f>/<C-b>, j/k, gg/G  scroll",
+  "  n, N       next / previous section (any heading; 3n moves three)",
+  "  c, C       next / previous chapter (the page's top-level headings)",
+  "  /<CR>, ?<CR>  repeat the last search (n and N move by section here)",
   "  ?          this help",
 }
 
@@ -290,6 +296,18 @@ local function show(view, push)
         require("devdocs").search("@" .. slug .. " ")
       end)
     end)
+    keys["n"] = act(function()
+      M.jump("section", 1, vim.v.count1)
+    end)
+    keys["N"] = act(function()
+      M.jump("section", -1, vim.v.count1)
+    end)
+    keys["c"] = act(function()
+      M.jump("chapter", 1, vim.v.count1)
+    end)
+    keys["C"] = act(function()
+      M.jump("chapter", -1, vim.v.count1)
+    end)
     keys["?"] = act(M.help)
     self.float = float.open {
       lines = display,
@@ -433,6 +451,56 @@ function M.back()
     return
   end
   show(prev, false)
+end
+
+--- Move to the next (dir 1) or previous (dir -1) heading, count times.
+--- kind "section": any heading; "chapter": one at the page's chapter level
+--- or shallower (headings.chapter_level). The heading goes to the top of
+--- the window and the jump on the jumplist. Page view: the buffer's
+--- headings. Section view: the whole page's, so the chapter level is the
+--- page's; a target outside the section opens the whole page there (on
+--- the history like p, so <BS> returns). Examples view: each example is a
+--- section and a chapter. Help: nothing.
+--- @param kind "section"|"chapter"
+--- @param dir integer 1 or -1
+--- @param count integer|nil
+function M.jump(kind, dir, count)
+  if not current or not current.float:valid() then
+    return
+  end
+  local view, win, buf = current.view, current.float.win, current.float.buf
+  if view.mode == "help" then
+    return
+  end
+  local list, offset = nil, 0
+  if view.mode == "examples" then
+    list = headings.blocks(vim.api.nvim_buf_get_lines(buf, 0, -1, false))
+  elseif view.mode == "section" then
+    offset = M.page_line(view) - 1
+    list = headings.parse(index.page(view.slug, view.path) or {})
+  else
+    list = headings.parse(vim.api.nvim_buf_get_lines(buf, 0, -1, false))
+  end
+  local cursor = vim.api.nvim_win_get_cursor(win)[1]
+  local target = headings.target(list, cursor + offset, dir, kind, count)
+  if not target then
+    local what = view.mode == "examples" and "example" or kind
+    notify(("no %s %s"):format(dir > 0 and "next" or "previous", what))
+    return
+  end
+  local line = target - offset
+  if line >= 1 and line <= vim.api.nvim_buf_line_count(buf) then
+    vim.api.nvim_win_call(win, function()
+      vim.cmd "normal! m'"
+      vim.api.nvim_win_set_cursor(win, { line, 0 })
+      vim.cmd "normal! zt"
+    end)
+    return
+  end
+  -- section view, heading outside the slice: the whole page at it
+  local v = vim.tbl_extend("force", view, { mode = "page", line = target, top = true })
+  v.topline, v.page_at = nil, nil
+  show(v, true)
 end
 
 function M.help()

@@ -130,3 +130,60 @@ describe("index", function()
     eq(nil, index.entry_for_path(slug, "elsewhere"))
   end)
 end)
+
+describe("index.section is fence-aware", function()
+  local root = tmpdir()
+  config.resolve { data_dir = root }
+  store.invalidate()
+  local slug = "fence~1"
+  store.write_json(paths.meta_file(slug), { slug = slug, name = "Fence", doc_version = "1" }, "meta")
+  store.write_file(paths.entries_file(slug), store.encode_entries {})
+  local function put(page, lines, anchors)
+    store.write_file(paths.page_file(slug, page), table.concat(lines, "\n") .. "\n")
+    local all = store.anchors(slug)
+    all[page] = anchors
+    store.write_json(paths.anchors_file(slug), { pages = all }, "anchors")
+    store.invalidate()
+  end
+
+  it("does not end a heading section at a fenced # comment", function()
+    put(
+      "page",
+      { "# T", "", "## A", "text", "```sh", "# comment", "echo", "```", "more", "## B", "b" },
+      { a = 3, b = 10 }
+    )
+    local lines, start = index.section(slug, "page#a")
+    eq(3, start)
+    eq(7, #lines)
+    eq("## A", lines[1])
+    eq("# comment", lines[4])
+    eq("more", lines[#lines])
+    local b = index.section(slug, "page#b")
+    eq({ "## B", "b" }, b)
+  end)
+
+  it("does not end a plain-anchor section at a fenced heading", function()
+    put("plain", { "# T", "intro", "```", "## fake", "```", "tail", "## Real", "x" }, { intro = 2 })
+    local lines, start = index.section(slug, "plain#intro")
+    eq(2, start)
+    eq({ "intro", "```", "## fake", "```", "tail" }, lines)
+  end)
+
+  it("does not end a definition term at a fenced heading or term", function()
+    put("terms", {
+      "# T",
+      "**f (x)**",
+      "",
+      "```lua",
+      "# not a heading",
+      "**g (y)**",
+      "```",
+      "body",
+      "**g (y)**",
+      "other",
+    }, { f = 2 })
+    local lines, start = index.section(slug, "terms#f")
+    eq(2, start)
+    eq({ "**f (x)**", "", "```lua", "# not a heading", "**g (y)**", "```", "body" }, lines)
+  end)
+end)

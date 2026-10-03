@@ -2,6 +2,7 @@
 --- merged for lookup, a page's lines, the slice of a page an entry points
 --- at (via anchors.json), the fenced code blocks of a slice (examples), and
 --- the breadcrumb shown as a viewer title. Reads files; caches through store.
+local headings = require "devdocs.headings"
 local paths = require "devdocs.paths"
 local store = require "devdocs.store"
 
@@ -57,7 +58,8 @@ end
 --- The slice of a page an entry points at.
 --- With a fragment: from the anchor line to the next heading of the same or a
 --- higher level (or, when the anchor is a definition term, to the next term
---- at the same indent or any heading). Without: the whole page.
+--- at the same indent or any heading). Without: the whole page. Lines in
+--- fenced code are never boundaries.
 --- @param slug string
 --- @param path string "library/os.path#os.path.join"
 --- @return string[]|nil lines, integer|nil start 1-based line in the page, string|nil err
@@ -76,11 +78,15 @@ function M.section(slug, path)
     -- unknown fragment: whole page, but say where we would have gone
     return lines, 1
   end
+  local code = headings.fenced(lines)
+  local function level_at(i)
+    return code[i] and 0 or heading_level(lines[i])
+  end
   local level = heading_level(lines[start])
   local stop = #lines
   if level > 0 then
     for i = start + 1, #lines do
-      local l = heading_level(lines[i])
+      local l = level_at(i)
       if l > 0 and l <= level then
         stop = i - 1
         break
@@ -90,11 +96,11 @@ function M.section(slug, path)
     local indent = #(lines[start]:match "^(%s*)")
     for i = start + 1, #lines do
       local line = lines[i]
-      if heading_level(line) > 0 then
+      if level_at(i) > 0 then
         stop = i - 1
         break
       end
-      if is_term(line) and #(line:match "^(%s*)") <= indent then
+      if not code[i] and is_term(line) and #(line:match "^(%s*)") <= indent then
         stop = i - 1
         break
       end
@@ -102,7 +108,7 @@ function M.section(slug, path)
   else
     -- an anchor on plain text: until the next heading
     for i = start + 1, #lines do
-      if heading_level(lines[i]) > 0 then
+      if level_at(i) > 0 then
         stop = i - 1
         break
       end
