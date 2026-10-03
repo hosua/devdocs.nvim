@@ -238,6 +238,105 @@ describe("headings", function()
     end)
   end)
 
+  describe("pages (paginated view)", function()
+    local function spans_of(pages)
+      local out = {}
+      for i, p in ipairs(pages) do
+        out[i] = { p.first, p.last }
+      end
+      return out
+    end
+    local function pages(lines, opts)
+      return spans_of(headings.pages(lines, opts))
+    end
+
+    it("pads short sections with the following ones until 5 body lines", function()
+      eq(
+        { { 1, 6 }, { 7, 12 }, { 13, 14 } },
+        pages { "# T", "a", "b", "c", "d", "e", "## A", "1", "2", "3", "4", "5", "## B", "x" }
+      )
+      eq({ { 1, 8 }, { 9, 10 } }, pages { "# T", "a", "## A", "1", "## B", "1", "2", "3", "## C", "z" })
+    end)
+
+    it("does not count blank lines", function()
+      eq({ { 1, 12 } }, pages { "# T", "", "a", "", "b", "", "c", "", "d", "", "## A", "x" })
+    end)
+
+    it("ignores headings inside fences but counts fence lines", function()
+      eq({ { 1, 6 }, { 7, 12 } }, pages { "# T", "```sh", "# c", "## d", "```", "x", "## A", "1", "2", "3", "4", "5" })
+    end)
+
+    it("starts with a preamble page that merges forward", function()
+      eq({ { 1, 8 } }, pages { "p1", "p2", "# T", "a", "b", "c", "d", "e" })
+      eq({ { 1, 5 }, { 6, 7 } }, pages { "p1", "p2", "p3", "p4", "p5", "# T", "a" })
+    end)
+
+    it("makes one page of a page without headings, none of an empty one", function()
+      eq({ { 1, 3 } }, pages { "a", "b", "c" })
+      eq({}, pages {})
+    end)
+
+    it("breaks at the given definition-term lines only", function()
+      local lines = {
+        "# T",
+        "a",
+        "b",
+        "c",
+        "d",
+        "e",
+        "**f()**",
+        "",
+        "  1",
+        "  2",
+        "  3",
+        "  4",
+        "  5",
+        "**g()**",
+        "",
+        "  1",
+      }
+      eq({ { 1, 6 }, { 7, 13 }, { 14, 16 } }, pages(lines, { breaks = { [7] = true, [14] = true } }))
+      eq({ { 1, 16 } }, pages(lines))
+    end)
+
+    it("never merges across the hard break, and starts a page there", function()
+      local lines = { "# T", "a", "## A", "1", "2", "3", "4", "5" }
+      eq({ { 1, 2 }, { 3, 8 } }, pages(lines, { hard = 3 }))
+      eq({ { 1, 8 } }, pages(lines))
+      eq({ { 1, 4 }, { 5, 8 } }, pages(lines, { hard = 5 }))
+    end)
+
+    it("honours min_body, ignores fenced breaks and closes an unclosed fence at the end", function()
+      eq({ { 1, 2 }, { 3, 4 } }, pages({ "# T", "a", "## A", "b" }, { min_body = 1 }))
+      eq({ { 1, 6 } }, pages({ "# T", "a", "```", "b", "```", "c" }, { breaks = { [4] = true }, min_body = 1 }))
+      eq({ { 1, 4 } }, pages { "# T", "```", "# x", "## y" })
+    end)
+
+    it("finds the page of a line, clamped", function()
+      local ps = { { first = 1, last = 6 }, { first = 7, last = 12 }, { first = 13, last = 14 } }
+      local i, p = headings.page_at(ps, 7)
+      eq(2, i)
+      eq({ first = 7, last = 12 }, p)
+      eq(1, (headings.page_at(ps, 0)))
+      eq(3, (headings.page_at(ps, 99)))
+      eq(nil, (headings.page_at({}, 3)))
+    end)
+
+    it("slices a page and trims its trailing blank lines", function()
+      eq({ "a", "b" }, headings.page_lines({ "a", "b", "", "", "" }, { first = 1, last = 5 }))
+      eq({ "x", "y" }, headings.page_lines({ "a", "x", "y", "", "z" }, { first = 2, last = 4 }))
+      eq({ "" }, headings.page_lines({ "", "", "" }, { first = 1, last = 3 }))
+    end)
+
+    it("lists headings plus the page starts that are not headings, as n/N stops", function()
+      local stops = headings.stops(
+        hs { { 1, 1 }, { 9, 2 } },
+        { { first = 1, last = 4 }, { first = 5, last = 8 }, { first = 9, last = 12 } }
+      )
+      eq(hs { { 1, 1 }, { 5, 6 }, { 9, 2 } }, stops)
+    end)
+  end)
+
   describe("blocks (examples view)", function()
     it("makes one pseudo-heading per fenced block, at its caption when it has one", function()
       local lines = {

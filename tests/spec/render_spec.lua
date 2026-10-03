@@ -301,7 +301,7 @@ describe("list render: marks on docs that are not installed", function()
   end)
 
   it("the help names the apply keys", function()
-    ok(table.concat(render.HELP, "\n"):find(":w", 1, true))
+    ok(table.concat((render.help_lines(80)), "\n"):find(":w", 1, true))
   end)
 end)
 
