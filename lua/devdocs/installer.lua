@@ -192,7 +192,7 @@ local function commit(job, tmp, out)
       return false, ("could not replace the old install: %s"):format(err)
     end
   end
-  vim.fn.mkdir(paths.docs_dir(), "p")
+  fetch.mkdirp(paths.docs_dir())
   local ok, err = vim.uv.fs_rename(out, dest)
   if not ok then
     if vim.uv.fs_stat(old) then
@@ -334,7 +334,7 @@ local function start(job)
   job.started_at = os.time()
   local tmp = paths.tmp_dir(job.slug)
   cleanup_tmp(tmp)
-  vim.fn.mkdir(tmp, "p")
+  fetch.mkdirp(tmp)
   emit("start", job)
   if config.get().install.source == "json" then
     download_json(job, tmp)

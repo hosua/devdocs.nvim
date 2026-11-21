@@ -1,17 +1,20 @@
---- Float: the one module that opens windows. A scratch buffer in a
+--- Float: the one module that opens devdocs windows. A scratch buffer in a
 --- centered float (or a split / tab per view.mode), sized from the editor,
 --- re-laid-out on VimResized, with a title, a footer and buffer-local keys.
---- M.note is the exception: a small plaintext popup at the cursor, closed on
---- cursor move, for messages like "nothing to document".
+--- Floats, notes and the blocking menu come from popup.nvim (popup.float,
+--- popup.geometry, popup.confirm); split and tab modes are ours.
 --- Highlight groups are `default = true` links, re-applied on every open
 --- because NvChad's base46 switches themes without a ColorScheme autocmd.
 local config = require "devdocs.config"
+local geometry = require "popup.geometry"
+local highlights = require "popup.highlights"
 local hints = require "devdocs.ui.hints"
+local popup_confirm = require "popup.confirm"
+local popup_float = require "popup.float"
 
 local M = {}
 
 M.NS = vim.api.nvim_create_namespace "devdocs_float"
-M.NOTE_NS = vim.api.nvim_create_namespace "devdocs_note"
 
 --- Highlight `spans` ({ row (1-based), col_start, col_end (byte columns),
 --- hl }) in a buffer, in namespace `ns`.
@@ -51,40 +54,33 @@ M.HIGHLIGHTS = {
   DevDocsNoteSubject = "Identifier",
 }
 
+local WINHL = highlights.winhl {
+  { "NormalFloat", "DevDocsNormal" },
+  { "FloatBorder", "DevDocsBorder" },
+  { "FloatTitle", "DevDocsTitle" },
+  { "FloatFooter", "DevDocsFooter" },
+}
+
 function M.apply_highlights()
-  for name, target in pairs(M.HIGHLIGHTS) do
-    if type(target) == "table" then
-      vim.api.nvim_set_hl(0, name, vim.tbl_extend("force", target, { default = true }))
-    else
-      vim.api.nvim_set_hl(0, name, { link = target, default = true })
-    end
-  end
+  highlights.define(M.HIGHLIGHTS)
 end
 
---- A small non-focusable popup at the cursor (vim.lsp.util.open_floating_preview,
---- so it replaces an LSP hover on the same buffer and closes when the cursor
---- moves). `opts.subject` = { row, start_col, end_col } (0-based, byte) is
---- highlighted as DevDocsNoteSubject.
+--- A small non-focusable popup at the cursor. `opts.subject` =
+--- { row, start_col, end_col } (0-based, byte) is highlighted as
+--- DevDocsNoteSubject.
 --- @param lines string[]
 --- @param opts { subject?: integer[] }|nil
 --- @return integer buf, integer win
 function M.note(lines, opts)
   M.apply_highlights()
-  local buf, win = vim.lsp.util.open_floating_preview(lines, "plaintext", {
+  return popup_float.note(lines, {
+    subject = opts and opts.subject or nil,
+    subject_hl = "DevDocsNoteSubject",
     border = M.border(),
-    focusable = false,
-    focus = false,
+    winhl = "NormalFloat:DevDocsNote,FloatBorder:DevDocsBorder",
     focus_id = "devdocs_note",
-    close_events = { "CursorMoved", "CursorMovedI", "InsertCharPre", "BufHidden" },
     max_width = 80,
-    wrap = true,
   })
-  vim.wo[win].winhighlight = "NormalFloat:DevDocsNote,FloatBorder:DevDocsBorder"
-  if opts and opts.subject then
-    local r, s, e = unpack(opts.subject)
-    vim.api.nvim_buf_set_extmark(buf, M.NOTE_NS, r, s, { end_col = e, hl_group = "DevDocsNoteSubject" })
-  end
-  return buf, win
 end
 
 --- @return string|table
@@ -98,32 +94,6 @@ function M.border()
     return "rounded"
   end
   return wb
-end
-
---- Size and position of a centered float.
---- @param width number fraction (<= 1) or columns
---- @param height number fraction (<= 1) or rows
---- @return { width: integer, height: integer, row: integer, col: integer }
-function M.layout(width, height)
-  local cols, lines = vim.o.columns, vim.o.lines - vim.o.cmdheight - 1
-  local w = width <= 1 and math.floor(cols * width) or width
-  local h = height <= 1 and math.floor(lines * height) or height
-  w = math.max(20, math.min(w, cols - 2))
-  h = math.max(5, math.min(h, lines - 2))
-  return { width = w, height = h, row = math.floor((lines - h) / 2), col = math.floor((cols - w) / 2) }
-end
-
---- Fit a title/footer string into a width, truncating the middle.
---- @param s string
---- @param width integer
---- @return string
-function M.fit(s, width)
-  local w = vim.fn.strdisplaywidth(s)
-  if w <= width then
-    return s
-  end
-  local keep = math.max(0, math.floor((width - 1) / 2))
-  return vim.fn.strcharpart(s, 0, keep) .. "…" .. vim.fn.strcharpart(s, vim.fn.strchars(s) - keep, keep)
 end
 
 --- @class DevDocsFloatOpts
@@ -155,48 +125,44 @@ function M.open(opts)
   M.apply_highlights()
   local cfg = config.get().view
   local mode = opts.mode or cfg.mode
-  local buf = vim.api.nvim_create_buf(false, true)
-  vim.bo[buf].buftype = "nofile"
-  vim.bo[buf].bufhidden = "wipe"
-  vim.bo[buf].swapfile = false
-  if opts.name then
-    pcall(vim.api.nvim_buf_set_name, buf, opts.name)
+  local self = { title = opts.title, footer = opts.footer, mode = mode }
+
+  --- Rectangle, title and footer for the float at the current editor size.
+  local function frame()
+    local rect = geometry.fractional(geometry.env(), opts.width or cfg.width, opts.height or cfg.height)
+    local title
+    if self.title and self.title ~= "" then
+      title = " " .. geometry.fit(self.title, rect.width - 4) .. " "
+    end
+    local footer
+    if type(self.footer) == "table" and #self.footer > 0 then
+      footer = hints.chunks(self.footer, rect.width - 2)
+    elseif type(self.footer) == "string" and self.footer ~= "" then
+      footer = " " .. geometry.fit(self.footer, rect.width - 4) .. " "
+    end
+    return rect, title, footer
   end
 
-  local self = { buf = buf, title = opts.title, footer = opts.footer, mode = mode }
-
-  local function win_config()
-    local l = M.layout(opts.width or cfg.width, opts.height or cfg.height)
-    local wc = {
-      relative = "editor",
-      width = l.width,
-      height = l.height,
-      row = l.row,
-      col = l.col,
-      style = "minimal",
+  local paint = { base = 1, safe = true }
+  local pf
+  if mode == "float" then
+    local rect, title, footer = frame()
+    pf = popup_float.open {
+      rect = rect,
+      title = title,
+      footer = footer,
+      footer_pos = "center",
       border = M.border(),
       zindex = 50,
+      winhl = WINHL,
+      ns = M.NS,
+      lines = opts.lines or {},
+      spans = opts.spans,
+      paint = paint,
     }
-    if self.title and self.title ~= "" then
-      wc.title = " " .. M.fit(self.title, l.width - 4) .. " "
-      wc.title_pos = "center"
-    end
-    if type(self.footer) == "table" and #self.footer > 0 then
-      wc.footer = hints.chunks(self.footer, l.width - 2)
-      wc.footer_pos = "center"
-    elseif type(self.footer) == "string" and self.footer ~= "" then
-      wc.footer = " " .. M.fit(self.footer, l.width - 4) .. " "
-      wc.footer_pos = "center"
-    end
-    return wc
-  end
-
-  local win
-  if mode == "float" then
-    win = vim.api.nvim_open_win(buf, true, win_config())
-    vim.wo[win].winhighlight =
-      "NormalFloat:DevDocsNormal,FloatBorder:DevDocsBorder,FloatTitle:DevDocsTitle,FloatFooter:DevDocsFooter"
   else
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.bo[buf].bufhidden = "wipe"
     if mode == "tab" then
       vim.cmd "tabnew"
     elseif mode == "vsplit" then
@@ -204,10 +170,16 @@ function M.open(opts)
     else
       vim.cmd "split"
     end
-    win = vim.api.nvim_get_current_win()
+    local win = vim.api.nvim_get_current_win()
     vim.api.nvim_win_set_buf(win, buf)
+    pf = { buf = buf, win = win, ns = M.NS }
+    popup_float.paint(pf, { lines = opts.lines or {}, spans = opts.spans }, paint)
   end
-  self.win = win
+  local buf, win = pf.buf, pf.win
+  self.buf, self.win = buf, win
+  if opts.name then
+    pcall(vim.api.nvim_buf_set_name, buf, opts.name)
+  end
 
   vim.wo[win].wrap = opts.wrap ~= false and cfg.wrap or false
   vim.wo[win].linebreak = true
@@ -224,20 +196,22 @@ function M.open(opts)
   end
 
   function self:valid()
-    return self.win and vim.api.nvim_win_is_valid(self.win) and vim.api.nvim_buf_is_valid(self.buf)
+    return popup_float.is_open(pf)
   end
 
   function self:set_lines(lines)
-    vim.bo[self.buf].modifiable = true
-    vim.api.nvim_buf_set_lines(self.buf, 0, -1, false, lines)
-    vim.bo[self.buf].modifiable = false
-    vim.bo[self.buf].modified = false
+    popup_float.paint(pf, { lines = lines }, paint)
+  end
+
+  local function reconfigure()
+    local rect, title, footer = frame()
+    popup_float.configure(pf, rect, title, footer, { footer_pos = "center" })
   end
 
   function self:set_title(title, footer)
     self.title, self.footer = title, footer
     if self.mode == "float" and self:valid() then
-      vim.api.nvim_win_set_config(self.win, win_config())
+      reconfigure()
     end
   end
 
@@ -251,10 +225,6 @@ function M.open(opts)
     end
   end
 
-  self:set_lines(opts.lines or {})
-  if opts.spans then
-    M.highlight(buf, M.NS, opts.spans)
-  end
   if opts.filetype then
     vim.bo[buf].filetype = opts.filetype
     pcall(vim.treesitter.start, buf, opts.filetype)
@@ -265,16 +235,6 @@ function M.open(opts)
   end
 
   local group = vim.api.nvim_create_augroup("devdocs_float_" .. buf, { clear = true })
-  if mode == "float" then
-    vim.api.nvim_create_autocmd("VimResized", {
-      group = group,
-      callback = function()
-        if self:valid() then
-          vim.api.nvim_win_set_config(self.win, win_config())
-        end
-      end,
-    })
-  end
   vim.api.nvim_create_autocmd({ "BufWipeout", "WinClosed" }, {
     group = group,
     buffer = buf,
@@ -286,64 +246,38 @@ function M.open(opts)
       end
     end,
   })
+  if mode == "float" then
+    popup_float.on_resize(pf, reconfigure)
+  end
   return self
 end
 
-local CHOOSE_NS = vim.api.nvim_create_namespace "devdocs_choose"
-
---- A modal menu in a centered float: shows `opts.lines` (with `opts.spans`
---- highlighted), then reads keys until one of them answers. y / <CR> say
---- yes, n / q / <Esc> (or an interrupt) say no; j / k / <C-d> / <C-u>
---- scroll a menu taller than the window. Blocks, like confirm(), so a
---- BufWriteCmd can ask before it returns (`:wq` then closes or not).
+--- A modal yes/no menu in a centered float (popup.confirm.choose): shows
+--- `opts.lines` (with `opts.spans` highlighted), then reads keys until one of
+--- them answers. y / <CR> say yes, n / q / <Esc> say no, j / k / <C-d> / <C-u>
+--- scroll a tall menu. Blocks, so a BufWriteCmd can ask before it returns.
+---
+--- choose opens its window and starts reading keys in one call, so the
+--- devdocs look (border, highlight groups, window options) is applied from a
+--- vim.schedule callback that runs while it waits for the first key.
 --- @param opts { lines: string[], spans: table[]|nil, title: string|nil, width: integer|nil }
 --- @return boolean
 function M.choose(opts)
-  local width = opts.width
-  if not width then
-    width = 20
-    for _, l in ipairs(opts.lines) do
-      width = math.max(width, vim.fn.strdisplaywidth(l))
+  M.apply_highlights()
+  local before = vim.api.nvim_get_current_win()
+  vim.schedule(function()
+    local win = vim.api.nvim_get_current_win()
+    if win == before or vim.api.nvim_win_get_config(win).relative == "" then
+      return
     end
-  end
-  local f = M.open {
-    lines = opts.lines,
-    title = opts.title,
-    width = width,
-    height = #opts.lines,
-    mode = "float",
-    wrap = false,
-    conceal = false,
-  }
-  vim.wo[f.win].cursorline = false
-  M.highlight(f.buf, CHOOSE_NS, opts.spans or {})
-  local yes = { y = true, Y = true, ["\r"] = true, ["\n"] = true }
-  local no = { n = true, N = true, q = true, ["\27"] = true, ["\3"] = true }
-  local scroll = {
-    j = "\5",
-    k = "\25",
-    [vim.api.nvim_replace_termcodes("<Down>", true, false, true)] = "\5",
-    [vim.api.nvim_replace_termcodes("<Up>", true, false, true)] = "\25",
-    ["\4"] = "\4",
-    ["\21"] = "\21",
-  }
-  local answer = false
-  while f:valid() do
-    vim.cmd.redraw()
-    local ok, ch = pcall(vim.fn.getcharstr)
-    if not ok or no[ch] then
-      break
-    elseif yes[ch] then
-      answer = true
-      break
-    elseif scroll[ch] then
-      vim.api.nvim_win_call(f.win, function()
-        vim.cmd("normal! " .. scroll[ch])
-      end)
-    end
-  end
-  f:close()
-  return answer
+    pcall(vim.api.nvim_win_set_config, win, { border = M.border() })
+    vim.wo[win].winhighlight = WINHL
+    vim.wo[win].linebreak = true
+    vim.wo[win].breakindent = true
+    vim.wo[win].signcolumn = "no"
+    vim.wo[win].foldenable = false
+  end)
+  return popup_confirm.choose(opts)
 end
 
 --- A yes/no confirmation that names what will happen.

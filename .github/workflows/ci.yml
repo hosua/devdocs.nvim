@@ -45,5 +45,11 @@ jobs:
         with:
           neovim: true
           version: ${{ matrix.neovim }}
+      # tests/run.lua finds both in $DEVDOCS_DEPS
+      - run: |
+          mkdir -p "$RUNNER_TEMP/deps"
+          git clone --depth 1 https://github.com/nvim-lua/plenary.nvim "$RUNNER_TEMP/deps/plenary.nvim"
+          git clone --depth 1 https://github.com/hosua/popup.nvim "$RUNNER_TEMP/deps/popup.nvim"
+          echo "DEVDOCS_DEPS=$RUNNER_TEMP/deps" >> "$GITHUB_ENV"
       - run: make test
       - run: make integration
