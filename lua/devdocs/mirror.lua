@@ -119,7 +119,7 @@ function M.run(opts)
     force = opts.force == true,
     scrape = scrape,
   }
-  vim.fn.mkdir(vim.fs.dirname(dir), "p")
+  fetch.mkdirp(vim.fs.dirname(dir))
   vim.cmd "botright 15split"
   local buf = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_win_set_buf(0, buf)

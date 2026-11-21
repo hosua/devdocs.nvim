@@ -35,6 +35,18 @@ function M.check()
   local src = debug.getinfo(require("devdocs").setup, "S").source:gsub("^@", "")
   h.info("loaded from " .. vim.fn.fnamemodify(src, ":~"))
 
+  h.start "dependencies"
+  for _, dep in ipairs {
+    { "popup", "popup.nvim: floats, key hints, confirm menus" },
+    { "plenary", "plenary.nvim: paths" },
+  } do
+    if pcall(require, dep[1]) then
+      h.ok(dep[2])
+    else
+      h.error(("%s is not installed: the viewer and the manager need it"):format(dep[2]:match "^[^:]+"))
+    end
+  end
+
   h.start "tools"
   for _, t in ipairs {
     { cfg.install.curl, "downloads docs", true },

@@ -9,6 +9,22 @@
 local this = debug.getinfo(1, "S").source:gsub("^@", "")
 local root = vim.fn.fnamemodify(this, ":p:h:h")
 vim.opt.runtimepath:prepend(root)
+-- popup.nvim and plenary.nvim are the plugin's dependencies: a sibling
+-- checkout or a lazy.nvim install, whichever exists (override: $DEVDOCS_DEPS,
+-- a directory holding both).
+for _, dep in ipairs { "popup.nvim", "plenary.nvim" } do
+  local candidates = {
+    (os.getenv "DEVDOCS_DEPS" or "") .. "/" .. dep,
+    root .. "/../" .. dep,
+    vim.fn.expand "~/.local/share/nvim/lazy/" .. dep,
+  }
+  for _, dir in ipairs(candidates) do
+    if vim.uv.fs_stat(dir) then
+      vim.opt.runtimepath:append(vim.fn.fnamemodify(dir, ":p"))
+      break
+    end
+  end
+end
 package.path = root .. "/tests/?.lua;" .. package.path
 
 local src = debug.getinfo(require("devdocs").setup, "S").source:gsub("^@", "")

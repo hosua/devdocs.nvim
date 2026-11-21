@@ -4,6 +4,7 @@
 --- ui/render.lua; everything about rows from ui/model.lua.
 local config = require "devdocs.config"
 local float = require "devdocs.ui.float"
+local geometry = require "popup.geometry"
 local hints = require "devdocs.ui.hints"
 local installer = require "devdocs.installer"
 local manifest = require "devdocs.manifest"
@@ -96,7 +97,7 @@ local function refresh_data()
 end
 
 local function visible_rows()
-  local l = float.layout(config.get().view.width, config.get().view.height)
+  local l = geometry.fractional(geometry.env(), config.get().view.width, config.get().view.height)
   return math.max(3, l.height - render.HEADER_LINES), l.width
 end
 

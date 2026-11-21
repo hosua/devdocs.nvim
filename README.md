@@ -19,6 +19,8 @@ mirror built by `:DevDocs mirror`.
 | Dependency | | Without it |
 |---|---|---|
 | Neovim 0.11+ | required | - |
+| [popup.nvim](https://github.com/hosua/popup.nvim) | required | the viewer, manager, help screens and confirm menus do not open (floats, key hints and the yes/no menu come from it) |
+| [plenary.nvim](https://github.com/nvim-lua/plenary.nvim) | required | directories for downloads and installs are not created |
 | `curl`, `tar` | required | docs can't be downloaded or extracted |
 | `rg` (ripgrep) | required for search | `:DevDocs search` reports `rg is not installed`; lookups, the viewer and the manager still work |
 | treesitter `markdown` parser | required (ships with Neovim) | the viewer shows plain text, no highlighting |
@@ -38,8 +40,9 @@ mirror built by `:DevDocs mirror`.
 {
   "hosua/devdocs.nvim",
   dependencies = {
+    "hosua/popup.nvim", -- floats, key hints, confirm menus
+    "nvim-lua/plenary.nvim",
     "nvim-telescope/telescope.nvim", -- optional: search and candidate pickers
-    "nvim-lua/plenary.nvim", -- telescope's own dependency
   },
   cmd = {
     "DevDocs", "DevDocsShowDefinition", "DevDocsShowExample", "DevDocsOpen", "DevDocsSearch", "DevDocsList",
@@ -55,7 +58,8 @@ mirror built by `:DevDocs mirror`.
 ```lua
 vim.pack.add({
   "https://github.com/hosua/devdocs.nvim",
-  "https://github.com/nvim-lua/plenary.nvim", -- for telescope
+  "https://github.com/hosua/popup.nvim",
+  "https://github.com/nvim-lua/plenary.nvim",
   "https://github.com/nvim-telescope/telescope.nvim", -- optional: search and candidate pickers
 })
 require("devdocs").setup({})
@@ -67,7 +71,8 @@ require("devdocs").setup({})
 
 ```vim
 Plug 'hosua/devdocs.nvim'
-Plug 'nvim-lua/plenary.nvim'          " for telescope
+Plug 'hosua/popup.nvim'
+Plug 'nvim-lua/plenary.nvim'
 Plug 'nvim-telescope/telescope.nvim'  " optional: search and candidate pickers
 " after plug#end():
 lua require("devdocs").setup({})

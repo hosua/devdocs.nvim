@@ -1,5 +1,4 @@
 local explain = require "devdocs.explain"
-local float = require "devdocs.ui.float"
 
 local function msg(target)
   return { explain.message(target) }
@@ -117,7 +116,8 @@ describe("explain.show", function()
       local fbuf = vim.api.nvim_win_get_buf(win)
       eq({ "42 is a number literal: nothing to document." }, vim.api.nvim_buf_get_lines(fbuf, 0, -1, false))
       ok(vim.wo[win].winhighlight:find("NormalFloat:DevDocsNote", 1, true))
-      local marks = vim.api.nvim_buf_get_extmarks(fbuf, float.NOTE_NS, 0, -1, { details = true })
+      local marks =
+        vim.api.nvim_buf_get_extmarks(fbuf, vim.api.nvim_create_namespace "popup_note", 0, -1, { details = true })
       eq(1, #marks)
       eq(0, marks[1][3])
       eq(2, marks[1][4].end_col)

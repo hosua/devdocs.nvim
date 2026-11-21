@@ -9,6 +9,12 @@ local M = {}
 --- @field err string|nil
 --- @field code integer|nil curl exit code on failure
 
+--- mkdir -p (main process only: the converter subprocess has no plenary) with the mode vim.fn.mkdir uses (0755), through plenary.path.
+--- @param dir string
+function M.mkdirp(dir)
+  require("plenary.path"):new(dir):mkdir { parents = true, exists_ok = true, mode = tonumber("755", 8) }
+end
+
 --- @param bin string
 --- @return boolean
 function M.available(bin)
@@ -27,7 +33,7 @@ function M.download(url, dest, opts, cb)
     cb { ok = false, status = 0, err = ("%s is not installed"):format(curl) }
     return nil
   end
-  vim.fn.mkdir(vim.fs.dirname(dest), "p")
+  M.mkdirp(vim.fs.dirname(dest))
   local part = dest .. ".part"
   local cmd = {
     curl,
@@ -80,7 +86,7 @@ function M.untar(archive, dir, opts, cb)
     cb(false, ("%s is not installed"):format(tar))
     return
   end
-  vim.fn.mkdir(dir, "p")
+  M.mkdirp(dir)
   vim.system({ tar, "-xzf", archive, "-C", dir }, { text = true }, function(res)
     if res.code ~= 0 then
       cb(false, vim.trim(res.stderr or "") ~= "" and vim.trim(res.stderr) or ("tar exited %d"):format(res.code))
