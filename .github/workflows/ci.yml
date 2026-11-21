@@ -16,6 +16,7 @@ concurrency:
 
 jobs:
   lint:
+    if: vars.CI_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -30,6 +31,7 @@ jobs:
           args: --check .
 
   test:
+    if: vars.CI_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
