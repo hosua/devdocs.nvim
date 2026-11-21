@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/hosua/devdocs.nvim/compare/v0.4.0...v0.4.1) (2026-11-21)
+
+
+### Improvements
+
+* use popup.nvim for floats, hints and the choose menu, plenary for mkdir ([#20](https://github.com/hosua/devdocs.nvim/issues/20)) ([e21d229](https://github.com/hosua/devdocs.nvim/commit/e21d2299dbff2d62f4d8287a3239a430a562375a))
+
 ## [0.4.0](https://github.com/hosua/devdocs.nvim/compare/v0.3.0...v0.4.0) (2026-10-03)
 
 
