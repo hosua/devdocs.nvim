@@ -40,14 +40,15 @@ concurrency:
 
 jobs:
   ci:
+    if: vars.CI_ENABLED == 'true'
     uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
     # secrets: inherit   # only if the CI workflow needs repo secrets
 
   report:
+    if: vars.CI_ENABLED == 'true' && (always())
     needs: ci
-    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

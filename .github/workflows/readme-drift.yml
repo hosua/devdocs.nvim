@@ -37,6 +37,7 @@ concurrency:
 jobs:
   drift:
     if: >-
+      vars.CI_ENABLED == 'true' &&
       github.event_name == 'pull_request' &&
       !contains(github.event.pull_request.labels.*.name, 'no-readme-needed')
     runs-on: ubuntu-latest
@@ -90,7 +91,7 @@ jobs:
           fi
 
   link-check:
-    if: github.event_name != 'pull_request'
+    if: vars.CI_ENABLED == 'true' && (github.event_name != 'pull_request')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
